@@ -21,6 +21,7 @@ class BookRepository(
 
   private val mutex = Mutex()
   private val pendingImports = mutableMapOf<String, ImportedPdfFile>()
+  private val pendingReextractions = mutableMapOf<String, BookMeta>()
 
   private val booksRootDir: File
     get() = File(context.filesDir, "books").apply { mkdirs() }
@@ -30,6 +31,11 @@ class BookRepository(
 
   private val _books = MutableStateFlow<List<BookMeta>>(emptyList())
   val books: StateFlow<List<BookMeta>> = _books.asStateFlow()
+
+  private data class CachedPagesData(
+    val version: Int,
+    val pages: List<ExtractedPage>,
+  )
 
   suspend fun loadLibrary() {
     val loaded = withContext(Dispatchers.IO) {
@@ -54,17 +60,110 @@ class BookRepository(
     password: String,
     onProgress: suspend (ExtractionProgress) -> Unit,
   ): ImportOutcome {
-    val pending = mutex.withLock { pendingImports[bookId] }
-      ?: return ImportOutcome.Failure("اطلاعات فایل رمزدار یافت نشد. لطفاً دوباره فایل را انتخاب کنید.")
+    val pendingImport = mutex.withLock { pendingImports[bookId] }
+    if (pendingImport != null) {
+      return extractAndPersist(imported = pendingImport, password = password, onProgress = onProgress)
+    }
 
-    return extractAndPersist(imported = pending, password = password, onProgress = onProgress)
+    val pendingReextract = mutex.withLock { pendingReextractions[bookId] }
+    if (pendingReextract != null) {
+      return reextractExistingBook(meta = pendingReextract, password = password, onProgress = onProgress)
+    }
+
+    return ImportOutcome.Failure("اطلاعات فایل رمزدار یافت نشد. لطفاً دوباره تلاش کنید.")
   }
 
   suspend fun cancelPendingImport(bookId: String) {
     val pending = mutex.withLock { pendingImports.remove(bookId) }
+    mutex.withLock { pendingReextractions.remove(bookId) }
     if (pending != null) {
       withContext(Dispatchers.IO) {
         pending.bookDir.deleteRecursively()
+      }
+    }
+  }
+
+  suspend fun reextractBook(
+    bookId: String,
+    password: String? = null,
+    onProgress: suspend (ExtractionProgress) -> Unit = {},
+  ): ImportOutcome {
+    val meta = withContext(Dispatchers.IO) {
+      _books.value.firstOrNull { it.id == bookId }
+        ?: readIndexFromDisk().firstOrNull { it.id == bookId }
+    } ?: return ImportOutcome.Failure("کتاب مورد نظر در کتابخانه یافت نشد.")
+
+    return reextractExistingBook(meta = meta, password = password, onProgress = onProgress)
+  }
+
+  fun isCacheVersionCurrent(meta: BookMeta): Boolean = !meta.needsReextraction
+
+  private suspend fun reextractExistingBook(
+    meta: BookMeta,
+    password: String?,
+    onProgress: suspend (ExtractionProgress) -> Unit,
+  ): ImportOutcome {
+    val pdfFile = File(meta.pdfFilePath)
+    if (!pdfFile.exists() || !pdfFile.isFile) {
+      return ImportOutcome.Failure("فایل PDF این کتاب در حافظهٔ داخلی پیدا نشد.")
+    }
+
+    val fallbackTitle = meta.fileName.substringBeforeLast('.').ifBlank { meta.title }
+    return when (
+      val result = extractor.extractBook(
+        pdfFile = pdfFile,
+        fallbackTitle = fallbackTitle,
+        password = password,
+        onProgress = onProgress,
+      )
+    ) {
+      is ExtractionResult.PasswordRequired -> {
+        mutex.withLock { pendingReextractions[meta.id] = meta }
+        ImportOutcome.NeedsPassword(
+          bookId = meta.id,
+          displayTitle = meta.title,
+          errorMessage = null,
+        )
+      }
+
+      is ExtractionResult.InvalidPassword -> {
+        mutex.withLock { pendingReextractions[meta.id] = meta }
+        ImportOutcome.NeedsPassword(
+          bookId = meta.id,
+          displayTitle = meta.title,
+          errorMessage = result.message,
+        )
+      }
+
+      is ExtractionResult.Error -> {
+        mutex.withLock { pendingReextractions.remove(meta.id) }
+        ImportOutcome.Failure(result.message)
+      }
+
+      is ExtractionResult.Success -> {
+        mutex.withLock { pendingReextractions.remove(meta.id) }
+        val updatedMeta = meta.copy(
+          title = result.resolvedTitle,
+          pageCount = result.pages.size,
+          emptyPagesCount = result.emptyPagesCount,
+          nonEmptyPagesCount = result.nonEmptyPagesCount,
+          totalChars = result.totalChars,
+          isPasswordProtected = result.isPasswordProtected,
+          qualityReport = result.qualityReport,
+          cacheSchemaVersion = CURRENT_EXTRACTION_SCHEMA_VERSION,
+        )
+
+        withContext(Dispatchers.IO) {
+          writePagesCache(File(updatedMeta.cacheFilePath), updatedMeta.id, result.pages)
+          mutex.withLock {
+            val current = readIndexFromDisk().filterNot { it.id == updatedMeta.id }.toMutableList()
+            current.add(0, updatedMeta)
+            writeIndexToDisk(current)
+            _books.value = current.sortedByDescending { it.addedAtMillis }
+          }
+        }
+
+        ImportOutcome.Success(updatedMeta)
       }
     }
   }
@@ -123,6 +222,7 @@ class BookRepository(
           addedAtMillis = System.currentTimeMillis(),
           isPasswordProtected = result.isPasswordProtected,
           qualityReport = result.qualityReport,
+          cacheSchemaVersion = CURRENT_EXTRACTION_SCHEMA_VERSION,
         )
 
         withContext(Dispatchers.IO) {
@@ -146,16 +246,36 @@ class BookRepository(
       ?: return@withContext null
 
     val cacheFile = File(meta.cacheFilePath)
-    if (!cacheFile.exists()) return@withContext null
+    val cached = if (cacheFile.exists()) readPagesCache(cacheFile) else null
 
-    val pages = readPagesCache(cacheFile) ?: return@withContext null
-    BookContent(meta = meta, pages = pages)
+    if (cached == null) {
+      val pdfExists = File(meta.pdfFilePath).exists()
+      return@withContext if (pdfExists) {
+        BookContent(
+          meta = meta.copy(cacheSchemaVersion = 1),
+          pages = emptyList(),
+          isCacheOutdated = true,
+        )
+      } else {
+        null
+      }
+    }
+
+    val effectiveVersion = minOf(meta.cacheSchemaVersion, cached.version)
+    val isOutdated = effectiveVersion < CURRENT_EXTRACTION_SCHEMA_VERSION
+    val effectiveMeta = meta.copy(cacheSchemaVersion = effectiveVersion)
+    BookContent(
+      meta = effectiveMeta,
+      pages = cached.pages,
+      isCacheOutdated = isOutdated,
+    )
   }
 
   suspend fun deleteBook(bookId: String) {
     withContext(Dispatchers.IO) {
       mutex.withLock {
         pendingImports.remove(bookId)
+        pendingReextractions.remove(bookId)
         val current = readIndexFromDisk()
         val target = current.firstOrNull { it.id == bookId }
         val updated = current.filterNot { it.id == bookId }
@@ -200,7 +320,7 @@ class BookRepository(
       array.put(bookMetaToJson(book))
     }
     val root = JSONObject().apply {
-      put("version", 1)
+      put("version", CURRENT_EXTRACTION_SCHEMA_VERSION)
       put("books", array)
     }
     atomicWriteText(indexFile, root.toString())
@@ -213,24 +333,26 @@ class BookRepository(
         JSONObject().apply {
           put("pageNumber", page.pageNumber)
           put("cleanedText", page.cleanedText)
+          put("rawText", page.rawText)
           put("isEmpty", page.isEmpty)
           put("charCount", page.charCount)
         }
       )
     }
     val root = JSONObject().apply {
-      put("version", 1)
+      put("version", CURRENT_EXTRACTION_SCHEMA_VERSION)
       put("bookId", bookId)
       put("pages", pagesArray)
     }
     atomicWriteText(cacheFile, root.toString())
   }
 
-  private fun readPagesCache(cacheFile: File): List<ExtractedPage>? {
+  private fun readPagesCache(cacheFile: File): CachedPagesData? {
     return try {
       val root = JSONObject(cacheFile.readText(Charsets.UTF_8))
+      val version = root.optInt("version", 1)
       val array = root.optJSONArray("pages") ?: return null
-      buildList(array.length()) {
+      val pages = buildList(array.length()) {
         for (i in 0 until array.length()) {
           val obj = array.getJSONObject(i)
           add(
@@ -239,10 +361,12 @@ class BookRepository(
               cleanedText = obj.getString("cleanedText"),
               isEmpty = obj.getBoolean("isEmpty"),
               charCount = obj.getInt("charCount"),
+              rawText = obj.optString("rawText", ""),
             )
           )
         }
       }
+      CachedPagesData(version = version, pages = pages)
     } catch (_: Throwable) {
       null
     }
@@ -276,6 +400,7 @@ class BookRepository(
       put("fileSizeBytes", meta.fileSizeBytes)
       put("addedAtMillis", meta.addedAtMillis)
       put("isPasswordProtected", meta.isPasswordProtected)
+      put("cacheSchemaVersion", meta.cacheSchemaVersion)
       put(
         "qualityReport",
         JSONObject().apply {
@@ -308,6 +433,7 @@ class BookRepository(
       fileSizeBytes = obj.getLong("fileSizeBytes"),
       addedAtMillis = obj.getLong("addedAtMillis"),
       isPasswordProtected = obj.optBoolean("isPasswordProtected", false),
+      cacheSchemaVersion = obj.optInt("cacheSchemaVersion", 1),
       qualityReport = BookQualityReport(
         status = status,
         warningMessage = warningMessage,

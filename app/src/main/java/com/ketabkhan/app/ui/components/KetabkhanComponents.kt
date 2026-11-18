@@ -343,6 +343,70 @@ fun WarningBanner(
 }
 
 @Composable
+fun OutdatedCacheBanner(
+  onReextractClick: () -> Unit,
+  isReextracting: Boolean,
+  modifier: Modifier = Modifier,
+) {
+  val isDark = isSystemInDarkTheme()
+  val bg = if (isDark) AmberWarningContainerDark else AmberWarningContainer
+  val fg = if (isDark) OnAmberWarningContainerDark else OnAmberWarningContainer
+
+  Surface(
+    modifier = modifier
+      .fillMaxWidth()
+      .testTag("outdated_cache_banner"),
+    shape = RoundedCornerShape(16.dp),
+    color = bg,
+  ) {
+    Column(
+      modifier = Modifier.padding(14.dp),
+      verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+      Row(
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalAlignment = Alignment.Top,
+      ) {
+        Icon(
+          imageVector = Icons.Default.WarningAmber,
+          contentDescription = "نیاز به استخراج دوباره",
+          tint = fg,
+          modifier = Modifier.size(24.dp),
+        )
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+          Text(
+            text = "نیاز به استخراج دوباره",
+            style = MaterialTheme.typography.titleSmall,
+            color = fg,
+          )
+          Text(
+            text = "این کتاب با نسخهٔ قدیمی‌تر استخراج شده است. برای اعمال اصلاحات نیم‌فاصله، ترتیب سطرها و ذخیرهٔ متن خام، دوباره استخراج کنید.",
+            style = MaterialTheme.typography.bodySmall,
+            color = fg,
+          )
+        }
+      }
+      OutlinedButton(
+        onClick = onReextractClick,
+        enabled = !isReextracting,
+        shape = RoundedCornerShape(12.dp),
+        border = BorderStroke(1.dp, fg.copy(alpha = 0.6f)),
+        modifier = Modifier
+          .align(Alignment.End)
+          .minimumInteractiveComponentSize()
+          .testTag("reextract_banner_button"),
+      ) {
+        Text(
+          text = if (isReextracting) "در حال استخراج دوباره..." else "استخراج دوباره",
+          style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+          color = fg,
+        )
+      }
+    }
+  }
+}
+
+@Composable
 fun ErrorBanner(
   message: String,
   onDismiss: (() -> Unit)? = null,

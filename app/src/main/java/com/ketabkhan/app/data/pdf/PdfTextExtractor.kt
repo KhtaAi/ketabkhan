@@ -8,10 +8,190 @@ import com.tom_roush.pdfbox.pdmodel.PDDocument
 import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
 import com.tom_roush.pdfbox.text.PDFTextStripper
 import java.io.File
+import java.text.Normalizer
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+
+data class ExtractionCandidateScore(
+  val totalScore: Float,
+  val persianLetterRatio: Float,
+  val functionWordCount: Int,
+  val wordCount: Int,
+  val brokenPrefixCount: Int,
+  val guillemetIssueCount: Int,
+  val digitAdjacencyCount: Int,
+  val corruptedCharCount: Int,
+  val hasCorruptionSignals: Boolean,
+)
+
+object PersianExtractionScorer {
+
+  private const val FALLBACK_SCORE_THRESHOLD = 48f
+
+  private val independentFunctionTokens = setOf(
+    "از", "به", "که", "را", "در", "و", "است", "بود",
+  )
+
+  private val brokenShortTokens = setOf("م", "نم", "نو")
+  private val brokenMiSplitRegex = Regex("(?<![\\u0621-\\u06D5])(?:نم|م)\\s+ی[\\u0621-\\u06D5]{2,}")
+  private val shiftedAlifMaddaRegex = Regex("[\\u0621-\\u06D5]{2,}\\s+[بپتثجچحخدذرزژسشصضطظعغفقکگلمنوهی]آ[\\u0621-\\u06D5]{2,}")
+  private val digitGluedToLetterRegex = Regex(
+    "(?:[0-9۰-۹٠-٩][\\u0621-\\u064A\\u066E-\\u06D5]|[\\u0621-\\u064A\\u066E-\\u06D5][0-9۰-۹٠-٩])"
+  )
+
+  fun scoreCandidate(rawText: String): ExtractionCandidateScore {
+    if (rawText.isBlank()) {
+      return ExtractionCandidateScore(
+        totalScore = 0f,
+        persianLetterRatio = 0f,
+        functionWordCount = 0,
+        wordCount = 0,
+        brokenPrefixCount = 0,
+        guillemetIssueCount = 0,
+        digitAdjacencyCount = 0,
+        corruptedCharCount = 0,
+        hasCorruptionSignals = false,
+      )
+    }
+
+    val normalized = Normalizer.normalize(rawText, Normalizer.Form.NFKC)
+      .replace('\u064A', '\u06CC')
+      .replace('\u0649', '\u06CC')
+      .replace('\u0643', '\u06A9')
+      .replace("\u0640", "")
+
+    var totalLetters = 0
+    var persianLetters = 0
+    var totalNonWhitespace = 0
+    var corruptedCount = 0
+
+    for (ch in normalized) {
+      if (ch.isWhitespace() || ch == '\u200C') continue
+      totalNonWhitespace++
+      val code = ch.code
+      val isBad = ch == '\uFFFD' ||
+        code in 0xE000..0xF8FF ||
+        code in 0x00C0..0x00FF ||
+        Character.getType(ch) == Character.CONTROL.toInt() ||
+        Character.getType(ch) == Character.PRIVATE_USE.toInt() ||
+        Character.getType(ch) == Character.UNASSIGNED.toInt()
+      if (isBad) {
+        corruptedCount++
+      }
+      if (ch.isLetter()) {
+        totalLetters++
+        if (isPersianOrArabic(ch)) {
+          persianLetters++
+        }
+      }
+    }
+
+    val persianRatio = if (totalLetters > 0) persianLetters.toFloat() / totalLetters.toFloat() else 0f
+    val rawTokens = normalized.split(Regex("\\s+")).filter { it.isNotBlank() }
+    val strippedTokens = rawTokens.map { tok ->
+      tok.trim { !it.isLetterOrDigit() && it != '\u200C' }
+    }.filter { it.isNotEmpty() }
+
+    val functionWordCount = strippedTokens.count { it in independentFunctionTokens }
+    val brokenShortCount = strippedTokens.count { it in brokenShortTokens }
+    val brokenPatternCount = brokenMiSplitRegex.findAll(normalized).count() +
+      shiftedAlifMaddaRegex.findAll(normalized).count()
+    val brokenPrefixTotal = brokenShortCount + brokenPatternCount
+
+    val guillemetIssues = countGuillemetIssues(normalized)
+    val digitAdjacencyCount = digitGluedToLetterRegex.findAll(normalized).count()
+
+    val wordCount = strippedTokens.size
+    val functionDensity = if (wordCount > 0) {
+      (functionWordCount.toFloat() / wordCount.toFloat()).coerceAtMost(0.40f) / 0.40f
+    } else {
+      0f
+    }
+
+    var score = 0f
+    // 1. Persian-Arabic character ratio (0..38 pts)
+    score += persianRatio * 38f
+    // 2. Presence of genuine independent Persian function words (0..32 pts)
+    score += (functionDensity * 22f) + minOf(functionWordCount, 5) * 2f
+    // 3. Penalty for broken short/shifted prefixes ("م یزد", "نو شآفرین")
+    score -= brokenShortCount * 10f + brokenPatternCount * 14f
+    // 4. Penalty for mismatched or inverted guillemets
+    score -= guillemetIssues * 10f
+    // 5. Penalty for digit glued to Persian letter ("۱۲۹۹رضاخان")
+    score -= digitAdjacencyCount * 5f
+    // 6. Penalty for replacement/PUA/non-Persian corruption characters
+    val corruptedRatio = if (totalNonWhitespace > 0) corruptedCount.toFloat() / totalNonWhitespace.toFloat() else 0f
+    score -= corruptedRatio * 80f + corruptedCount * 2f
+
+    // Extra bonus when Persian prose has multi-character words and no structural splits
+    val avgWordLen = if (wordCount > 0) strippedTokens.sumOf { it.length }.toFloat() / wordCount.toFloat() else 0f
+    if (avgWordLen in 3.2f..7.5f && brokenPrefixTotal == 0) {
+      score += 8f
+    }
+
+    val hasCorruptionSignals = brokenPrefixTotal > 0 ||
+      guillemetIssues > 0 ||
+      digitAdjacencyCount > 0 ||
+      corruptedCount > 0 ||
+      (wordCount >= 6 && functionWordCount == 0 && persianRatio > 0.4f) ||
+      (totalLetters >= 12 && persianRatio < 0.5f)
+
+    return ExtractionCandidateScore(
+      totalScore = score,
+      persianLetterRatio = persianRatio,
+      functionWordCount = functionWordCount,
+      wordCount = wordCount,
+      brokenPrefixCount = brokenPrefixTotal,
+      guillemetIssueCount = guillemetIssues,
+      digitAdjacencyCount = digitAdjacencyCount,
+      corruptedCharCount = corruptedCount,
+      hasCorruptionSignals = hasCorruptionSignals,
+    )
+  }
+
+  fun shouldEvaluateFallback(primaryScore: ExtractionCandidateScore, rawText: String): Boolean {
+    if (rawText.isBlank()) return false
+    return primaryScore.totalScore < FALLBACK_SCORE_THRESHOLD || primaryScore.hasCorruptionSignals
+  }
+
+  private fun countGuillemetIssues(text: String): Int {
+    if (!text.contains('«') && !text.contains('»')) return 0
+    var openCount = 0
+    var closeCount = 0
+    var depth = 0
+    var inverted = 0
+    for (ch in text) {
+      when (ch) {
+        '«' -> {
+          openCount++
+          depth++
+        }
+        '»' -> {
+          closeCount++
+          if (depth > 0) {
+            depth--
+          } else {
+            inverted++
+          }
+        }
+      }
+    }
+    val imbalance = kotlin.math.abs(openCount - closeCount)
+    return imbalance + inverted
+  }
+
+  private fun isPersianOrArabic(ch: Char): Boolean {
+    val code = ch.code
+    return code in 0x0621..0x064A ||
+      code in 0x066E..0x06D5 ||
+      code in 0x0750..0x077F ||
+      code in 0x08A0..0x08FF ||
+      code in 0xFB50..0xFDFF ||
+      code in 0xFE70..0xFEFF
+  }
+}
 
 sealed interface ExtractionResult {
   data class Success(
@@ -196,24 +376,54 @@ class PdfTextExtractor(private val context: Context) {
       PDDocument.load(pdfFile, password ?: "", memorySetting).use { document ->
         val totalPages = document.numberOfPages
         val rawMetadataTitle = runCatching { document.documentInformation?.title }.getOrNull()
-        val cleanedMetaTitle = rawMetadataTitle?.let { PersianTextCleaner.cleanInline(it) }
+        val cleanedMetaTitle = rawMetadataTitle?.let {
+          PersianTextCleaner.cleanInline(PersianReadingOrderRepairer.repairLine(it))
+        }
         val resolvedTitle = if (!cleanedMetaTitle.isNullOrBlank() && isReadableTitle(cleanedMetaTitle)) {
           cleanedMetaTitle
         } else {
           fallbackTitle
         }
 
-        val stripper = PDFTextStripper().apply {
+        // Candidate 1: Position-sorted with tuned kerning tolerance to reduce spurious ZWNJ spaces
+        val sortedStripper = PDFTextStripper().apply {
           sortByPosition = true
+          spacingTolerance = 0.58f
+          averageCharTolerance = 0.36f
         }
 
-        val rawPages = ArrayList<String>(totalPages)
+        // Candidate 2: Stream-order extractor evaluated only when Candidate 1 shows weak/corrupted score
+        var streamStripper: PDFTextStripper? = null
+
+        val selectedRawPages = ArrayList<String>(totalPages)
+        val orderRepairedPages = ArrayList<String>(totalPages)
+
         for (page in 1..totalPages) {
           coroutineContext.ensureActive()
-          stripper.startPage = page
-          stripper.endPage = page
-          val pageText = stripper.getText(document) ?: ""
-          rawPages.add(pageText)
+          sortedStripper.startPage = page
+          sortedStripper.endPage = page
+          val candidateA = sortedStripper.getText(document) ?: ""
+          val scoreA = PersianExtractionScorer.scoreCandidate(candidateA)
+
+          val chosenRaw = if (PersianExtractionScorer.shouldEvaluateFallback(scoreA, candidateA)) {
+            coroutineContext.ensureActive()
+            val fallbackStripper = streamStripper ?: PDFTextStripper().apply {
+              sortByPosition = false
+              spacingTolerance = 0.55f
+              averageCharTolerance = 0.35f
+            }.also { streamStripper = it }
+            fallbackStripper.startPage = page
+            fallbackStripper.endPage = page
+            val candidateB = fallbackStripper.getText(document) ?: ""
+            val scoreB = PersianExtractionScorer.scoreCandidate(candidateB)
+            if (scoreB.totalScore > scoreA.totalScore) candidateB else candidateA
+          } else {
+            candidateA
+          }
+
+          selectedRawPages.add(chosenRaw)
+          orderRepairedPages.add(PersianReadingOrderRepairer.repairPage(chosenRaw))
+
           onProgress(
             ExtractionProgress(
               currentPage = page,
@@ -223,13 +433,15 @@ class PdfTextExtractor(private val context: Context) {
           )
         }
 
-        val cleanedPages = PersianTextCleaner.cleanBookPages(rawPages)
-        val extractedPages = cleanedPages.map { cleaned ->
+        val cleanedPages = PersianTextCleaner.cleanBookPages(orderRepairedPages)
+        val extractedPages = cleanedPages.mapIndexed { index, cleaned ->
+          val rawText = selectedRawPages.getOrElse(index) { "" }.trim()
           ExtractedPage(
             pageNumber = cleaned.pageNumber,
             cleanedText = cleaned.cleanedText,
             isEmpty = cleaned.isEmpty,
             charCount = cleaned.cleanedText.length,
+            rawText = rawText,
           )
         }
 

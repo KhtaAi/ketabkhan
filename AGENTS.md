@@ -846,3 +846,40 @@ Per section 0.5, the following CI environment rules apply to all workflows:
   components, CI workflows MUST include a pre-build SDK license acceptance step
   (`sdkmanager --licenses`) without hardcoding exact SDK component revisions,
   allowing AGP to install the required platform and build-tools automatically.
+
+---
+
+## 20. Persian PDF Extraction Quality, ZWNJ Restoration & Cache Versioning Rules
+Per section 0.5, real-device validation of Persian PDF extraction established the
+following permanent standards:
+
+### 20.1. Real-Book Validation & Multi-Candidate Scoring Rule
+- Persian PDF extraction MUST NOT rely solely on synthetic text or a single
+  `PDFTextStripper` pass.
+- Primary extraction (`sortByPosition = true` with kerning tolerances tuned to
+  preserve ZWNJ) MUST be evaluated by a deterministic readability scorer; when
+  weak or corrupted signals appear (e.g., broken prefixes, guillemet mismatch,
+  digit-letter adhesion, or replacement chars), a stream-order fallback pass
+  (`sortByPosition = false`) MUST be evaluated and only the higher-scoring
+  candidate kept.
+
+### 20.2. High-Confidence Reading-Order Repair Rule
+- RTL visual/word-order repair and guillemet mirroring (`»...«` -> `«...»`) MUST
+  enforce a strict high-confidence gate: never invert or scramble valid or
+  ambiguous prose lines when structural reversal signals are absent or the score
+  margin is insufficient.
+
+### 20.3. Morphological ZWNJ & Spacing Restoration Rule
+- Morphological restoration of ZWNJ (`می‌`/`نمی‌`, shifted `آ` compounds,
+  `ها`/`های`/`هایی`/`ترین`/`تر`, `هٔ`, enclitics) and digit-to-letter spacing
+  MUST operate as pure, deterministic Kotlin with explicit exception-word
+  protection (`میز`, `میدان`, `میل`, `میهن`, `نمک`, etc.) and zero binary models.
+
+### 20.4. Raw/Cleaned Diagnostic Storage & Cache Schema Versioning Rule
+- Per-page caches MUST store both the selected `rawText` and `cleanedText` alongside
+  an explicit extraction schema version (`cacheSchemaVersion`).
+- Whenever extraction logic upgrades cleanly in a breaking or diagnostic way,
+  increment the schema version, flag legacy caches (`version < current`) as
+  needing re-extraction (`needsReextraction`), and provide an in-place
+  re-extraction action against the locally stored PDF without forcing the user to
+  re-pick the document via SAF.

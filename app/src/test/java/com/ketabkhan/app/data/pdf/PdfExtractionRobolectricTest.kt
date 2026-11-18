@@ -133,10 +133,17 @@ class PdfExtractionRobolectricTest {
 
     val cached = repo.getBookContent(meta.id)
     assertNotNull(cached)
-    assertEquals(2, cached!!.pages.size)
+    assertEquals(CURRENT_EXTRACTION_SCHEMA_VERSION, cached!!.meta.cacheSchemaVersion)
+    assertFalse(cached.meta.needsReextraction)
+    assertFalse(cached.isCacheOutdated)
+    assertEquals(2, cached.pages.size)
     assertTrue(
       "Expected 'سلام دنیا!' in extracted text, got: '${cached.pages[0].cleanedText}'",
       cached.pages[0].cleanedText.contains("سلام دنیا!")
+    )
+    assertTrue(
+      "Expected non-empty rawText saved alongside cleanedText",
+      cached.pages[0].rawText.isNotBlank()
     )
     assertTrue(File(meta.pdfFilePath).exists())
     assertTrue(File(meta.cacheFilePath).exists())
@@ -145,6 +152,88 @@ class PdfExtractionRobolectricTest {
     assertFalse(File(meta.pdfFilePath).exists())
     assertFalse(File(meta.cacheFilePath).exists())
     assertNull(repo.getBookContent(meta.id))
+  }
+
+  @Test
+  fun `candidate scorer favors intact Persian text over broken ZWNJ guillemet and digit defects`() {
+    val intactCandidate = "در سال ۱۲۹۹ رضاخان به «تهران» می‌زد و نامش نوش‌آفرین بود."
+    val brokenCandidate = "در سال۱۲۹۹ رضاخان به »تهران« م یزد و نامش نو شآفرین بود."
+    val corruptedCharsCandidate = "\uFFFD\uE001\u00C3 در\uFFFD ۱۲۹۹"
+
+    val intactScore = PersianExtractionScorer.scoreCandidate(intactCandidate)
+    val brokenScore = PersianExtractionScorer.scoreCandidate(brokenCandidate)
+    val corruptedScore = PersianExtractionScorer.scoreCandidate(corruptedCharsCandidate)
+
+    assertTrue(intactScore.totalScore > brokenScore.totalScore)
+    assertTrue(intactScore.totalScore > corruptedScore.totalScore)
+    assertFalse(intactScore.hasCorruptionSignals)
+    assertTrue(brokenScore.hasCorruptionSignals)
+    assertTrue(PersianExtractionScorer.shouldEvaluateFallback(brokenScore, brokenCandidate))
+  }
+
+  @Test
+  fun `marks legacy schema v1 cache as outdated and upgrades via reextractBook without re-picking URI`() = runBlocking {
+    val pdfFile = buildPersianUnicodePdf(
+      target = tempFolder.newFile("legacy_upgrade.pdf"),
+      title = "کتاب نسخه قدیم",
+      pageTexts = listOf(
+        "در سال ۱۲۹۹رضاخان م یزد و نو شآفرین در صفحه ی اول بود.",
+      ),
+    )
+
+    val repo = BookRepository(context)
+    val outcome = repo.importAndExtractBook(Uri.fromFile(pdfFile)) {}
+    assertTrue(outcome is ImportOutcome.Success)
+    val meta = (outcome as ImportOutcome.Success).book
+
+    // Simulate a Phase 1 (v1) cache & index entry on disk without rawText or cacheSchemaVersion
+    val cacheFile = File(meta.cacheFilePath)
+    cacheFile.writeText(
+      """
+      {
+        "version": 1,
+        "bookId": "${meta.id}",
+        "pages": [
+          {
+            "pageNumber": 1,
+            "cleanedText": "متن قدیمی م یزد و نو شآفرین",
+            "isEmpty": false,
+            "charCount": 27
+          }
+        ]
+      }
+      """.trimIndent(),
+      Charsets.UTF_8,
+    )
+    val indexFile = File(context.filesDir, "books/library_index.json")
+    val patchedIndex = indexFile.readText(Charsets.UTF_8)
+      .replace("\"cacheSchemaVersion\":2", "\"cacheSchemaVersion\":1")
+    indexFile.writeText(patchedIndex, Charsets.UTF_8)
+
+    repo.loadLibrary()
+    val libraryBook = repo.books.value.first { it.id == meta.id }
+    assertTrue(libraryBook.needsReextraction)
+    assertFalse(repo.isCacheVersionCurrent(libraryBook))
+
+    val outdatedContent = repo.getBookContent(meta.id)
+    assertNotNull(outdatedContent)
+    assertTrue(outdatedContent!!.isCacheOutdated)
+    assertEquals("", outdatedContent.pages[0].rawText)
+
+    // Re-extract directly from the stored local PDF file
+    val reextractOutcome = repo.reextractBook(meta.id)
+    assertTrue(reextractOutcome is ImportOutcome.Success)
+    val upgradedMeta = (reextractOutcome as ImportOutcome.Success).book
+    assertEquals(CURRENT_EXTRACTION_SCHEMA_VERSION, upgradedMeta.cacheSchemaVersion)
+    assertFalse(upgradedMeta.needsReextraction)
+
+    val upgradedContent = repo.getBookContent(meta.id)!!
+    assertFalse(upgradedContent.isCacheOutdated)
+    assertTrue(upgradedContent.pages[0].rawText.isNotBlank())
+    val cleaned = upgradedContent.pages[0].cleanedText
+    assertTrue("Expected ZWNJ fix می‌زد in '$cleaned'", cleaned.contains("می\u200Cزد"))
+    assertTrue("Expected ZWNJ fix نوش‌آفرین in '$cleaned'", cleaned.contains("نوش\u200Cآفرین"))
+    assertTrue("Expected digit spacing ۱۲۹۹ رضاخان in '$cleaned'", cleaned.contains("۱۲۹۹ رضاخان"))
   }
 
   @Test

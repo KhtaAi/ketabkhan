@@ -1,5 +1,7 @@
 package com.ketabkhan.app.data.pdf
 
+const val CURRENT_EXTRACTION_SCHEMA_VERSION = 2
+
 enum class PdfQualityStatus {
   OK,
   LIKELY_SCANNED_IMAGE,
@@ -28,18 +30,24 @@ data class BookMeta(
   val addedAtMillis: Long,
   val isPasswordProtected: Boolean,
   val qualityReport: BookQualityReport = BookQualityReport(),
-)
+  val cacheSchemaVersion: Int = CURRENT_EXTRACTION_SCHEMA_VERSION,
+) {
+  val needsReextraction: Boolean
+    get() = cacheSchemaVersion < CURRENT_EXTRACTION_SCHEMA_VERSION
+}
 
 data class ExtractedPage(
   val pageNumber: Int,
   val cleanedText: String,
   val isEmpty: Boolean,
   val charCount: Int,
+  val rawText: String = "",
 )
 
 data class BookContent(
   val meta: BookMeta,
   val pages: List<ExtractedPage>,
+  val isCacheOutdated: Boolean = meta.needsReextraction,
 )
 
 data class ExtractionProgress(

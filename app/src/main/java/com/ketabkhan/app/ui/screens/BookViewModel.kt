@@ -6,6 +6,8 @@ import androidx.lifecycle.viewModelScope
 import com.ketabkhan.app.data.pdf.BookContent
 import com.ketabkhan.app.data.pdf.BookRepository
 import com.ketabkhan.app.data.pdf.ExtractedPage
+import com.ketabkhan.app.data.pdf.ExtractionProgress
+import com.ketabkhan.app.data.pdf.ImportOutcome
 import com.ketabkhan.app.domain.text.SentenceSplitter
 import com.ketabkhan.app.domain.tts.TtsAvailability
 import com.ketabkhan.app.domain.tts.TtsEngine
@@ -20,6 +22,11 @@ import kotlinx.coroutines.withContext
 enum class BookViewMode {
   FULL_PAGES,
   SELECTED_RANGE,
+}
+
+enum class BookTextSource {
+  CLEANED,
+  RAW,
 }
 
 data class PageRangeSummary(
@@ -38,10 +45,15 @@ sealed interface BookUiState {
   data class Loaded(
     val content: BookContent,
     val viewMode: BookViewMode,
+    val textSource: BookTextSource = BookTextSource.CLEANED,
     val rangeStart: Int,
     val rangeEnd: Int,
     val rangeSummary: PageRangeSummary,
     val ttsAvailability: TtsAvailability,
+    val isReextracting: Boolean = false,
+    val reextractionProgress: ExtractionProgress? = null,
+    val reextractionError: String? = null,
+    val passwordPrompt: PasswordPromptState? = null,
   ) : BookUiState
 }
 
@@ -69,12 +81,13 @@ class BookViewModel(
 
       val total = content.pages.size.coerceAtLeast(1)
       val initialEnd = minOf(total, 5)
-      val summary = computeRangeSummary(content.pages, 1, initialEnd)
+      val summary = computeRangeSummary(content.pages, 1, initialEnd, BookTextSource.CLEANED)
       val ttsAvailability = ttsEngine.checkAvailability()
 
       _uiState.value = BookUiState.Loaded(
         content = content,
         viewMode = BookViewMode.FULL_PAGES,
+        textSource = BookTextSource.CLEANED,
         rangeStart = 1,
         rangeEnd = initialEnd,
         rangeSummary = summary,
@@ -88,6 +101,24 @@ class BookViewModel(
     _uiState.value = current.copy(viewMode = mode)
   }
 
+  fun setTextSource(source: BookTextSource) {
+    val current = _uiState.value as? BookUiState.Loaded ?: return
+    if (current.textSource == source) return
+    viewModelScope.launch {
+      val summary = computeRangeSummary(
+        pages = current.content.pages,
+        startPage = current.rangeStart,
+        endPage = current.rangeEnd,
+        textSource = source,
+      )
+      val latest = _uiState.value as? BookUiState.Loaded ?: return@launch
+      _uiState.value = latest.copy(
+        textSource = source,
+        rangeSummary = summary,
+      )
+    }
+  }
+
   fun applyPageRange(startPage: Int, endPage: Int) {
     val current = _uiState.value as? BookUiState.Loaded ?: return
     val total = current.content.pages.size.coerceAtLeast(1)
@@ -95,8 +126,14 @@ class BookViewModel(
     val clampedEnd = endPage.coerceIn(clampedStart, total)
 
     viewModelScope.launch {
-      val summary = computeRangeSummary(current.content.pages, clampedStart, clampedEnd)
-      _uiState.value = current.copy(
+      val summary = computeRangeSummary(
+        pages = current.content.pages,
+        startPage = clampedStart,
+        endPage = clampedEnd,
+        textSource = current.textSource,
+      )
+      val latest = _uiState.value as? BookUiState.Loaded ?: return@launch
+      _uiState.value = latest.copy(
         viewMode = BookViewMode.SELECTED_RANGE,
         rangeStart = clampedStart,
         rangeEnd = clampedEnd,
@@ -105,19 +142,144 @@ class BookViewModel(
     }
   }
 
-  suspend fun previewRange(pages: List<ExtractedPage>, startPage: Int, endPage: Int): PageRangeSummary {
-    return computeRangeSummary(pages, startPage, endPage)
+  fun reextractBook() {
+    val current = _uiState.value as? BookUiState.Loaded ?: return
+    if (current.isReextracting) return
+
+    viewModelScope.launch {
+      _uiState.value = current.copy(
+        isReextracting = true,
+        reextractionProgress = ExtractionProgress(0, current.content.meta.pageCount, current.content.meta.title),
+        reextractionError = null,
+        passwordPrompt = null,
+      )
+
+      val outcome = repository.reextractBook(bookId) { progress ->
+        val latest = _uiState.value as? BookUiState.Loaded ?: return@reextractBook
+        _uiState.value = latest.copy(reextractionProgress = progress)
+      }
+
+      handleReextractionOutcome(outcome)
+    }
+  }
+
+  fun submitPassword(password: String) {
+    val current = _uiState.value as? BookUiState.Loaded ?: return
+    val prompt = current.passwordPrompt ?: return
+    if (current.isReextracting) return
+
+    viewModelScope.launch {
+      _uiState.value = current.copy(
+        isReextracting = true,
+        reextractionProgress = ExtractionProgress(0, current.content.meta.pageCount, prompt.bookTitle),
+        passwordPrompt = null,
+        reextractionError = null,
+      )
+
+      val outcome = repository.retryExtractWithPassword(
+        bookId = prompt.bookId,
+        password = password,
+      ) { progress ->
+        val latest = _uiState.value as? BookUiState.Loaded ?: return@retryExtractWithPassword
+        _uiState.value = latest.copy(reextractionProgress = progress)
+      }
+
+      handleReextractionOutcome(outcome)
+    }
+  }
+
+  fun cancelPasswordPrompt() {
+    val current = _uiState.value as? BookUiState.Loaded ?: return
+    _uiState.value = current.copy(passwordPrompt = null)
+    viewModelScope.launch {
+      repository.cancelPendingImport(bookId)
+    }
+  }
+
+  fun dismissReextractionError() {
+    val current = _uiState.value as? BookUiState.Loaded ?: return
+    _uiState.value = current.copy(reextractionError = null)
+  }
+
+  private suspend fun handleReextractionOutcome(outcome: ImportOutcome) {
+    val latest = _uiState.value as? BookUiState.Loaded ?: return
+    when (outcome) {
+      is ImportOutcome.Success -> {
+        val refreshed = repository.getBookContent(bookId)
+        if (refreshed != null) {
+          val total = refreshed.pages.size.coerceAtLeast(1)
+          val clampedStart = latest.rangeStart.coerceIn(1, total)
+          val clampedEnd = latest.rangeEnd.coerceIn(clampedStart, total)
+          val summary = computeRangeSummary(
+            pages = refreshed.pages,
+            startPage = clampedStart,
+            endPage = clampedEnd,
+            textSource = latest.textSource,
+          )
+          _uiState.value = latest.copy(
+            content = refreshed,
+            rangeStart = clampedStart,
+            rangeEnd = clampedEnd,
+            rangeSummary = summary,
+            isReextracting = false,
+            reextractionProgress = null,
+            reextractionError = null,
+            passwordPrompt = null,
+          )
+        } else {
+          _uiState.value = latest.copy(
+            isReextracting = false,
+            reextractionProgress = null,
+          )
+        }
+      }
+
+      is ImportOutcome.NeedsPassword -> {
+        _uiState.value = latest.copy(
+          isReextracting = false,
+          reextractionProgress = null,
+          passwordPrompt = PasswordPromptState(
+            bookId = outcome.bookId,
+            bookTitle = outcome.displayTitle,
+            errorMessage = outcome.errorMessage,
+          ),
+        )
+      }
+
+      is ImportOutcome.Failure -> {
+        _uiState.value = latest.copy(
+          isReextracting = false,
+          reextractionProgress = null,
+          reextractionError = outcome.message,
+        )
+      }
+    }
+  }
+
+  suspend fun previewRange(
+    pages: List<ExtractedPage>,
+    startPage: Int,
+    endPage: Int,
+    textSource: BookTextSource = (_uiState.value as? BookUiState.Loaded)?.textSource ?: BookTextSource.CLEANED,
+  ): PageRangeSummary {
+    return computeRangeSummary(pages, startPage, endPage, textSource)
   }
 
   private suspend fun computeRangeSummary(
     pages: List<ExtractedPage>,
     startPage: Int,
     endPage: Int,
+    textSource: BookTextSource,
   ): PageRangeSummary = withContext(Dispatchers.Default) {
     val slice = pages.filter { it.pageNumber in startPage..endPage }
     val emptyCount = slice.count { it.isEmpty }
     val nonEmptyPages = slice.filter { !it.isEmpty }
-    val combinedText = nonEmptyPages.joinToString(separator = "\n\n") { it.cleanedText }
+    val combinedText = nonEmptyPages.joinToString(separator = "\n\n") { page ->
+      when (textSource) {
+        BookTextSource.CLEANED -> page.cleanedText
+        BookTextSource.RAW -> page.rawText.ifBlank { page.cleanedText }
+      }
+    }
     val sentences = SentenceSplitter.split(combinedText)
     val previewLimit = 360
     val preview = if (combinedText.length <= previewLimit) {

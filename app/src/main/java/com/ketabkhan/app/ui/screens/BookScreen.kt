@@ -8,23 +8,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
-import androidx.compose.material.icons.filled.AudioFile
 import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.GraphicEq
-import androidx.compose.material.icons.filled.ImageNotSupported
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -48,17 +41,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import com.ketabkhan.app.data.pdf.ExtractedPage
 import com.ketabkhan.app.data.pdf.PdfQualityStatus
 import com.ketabkhan.app.domain.text.PersianDigits
-import com.ketabkhan.app.domain.tts.TtsAvailability
 import com.ketabkhan.app.ui.components.ErrorBanner
-import com.ketabkhan.app.ui.components.KetabkhanPrimaryButton
-import com.ketabkhan.app.ui.components.KetabkhanSecondaryButton
+import com.ketabkhan.app.ui.components.ExtractionProgressCard
+import com.ketabkhan.app.ui.components.OutdatedCacheBanner
+import com.ketabkhan.app.ui.components.PdfPasswordSheet
 import com.ketabkhan.app.ui.components.WarningBanner
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -70,10 +61,8 @@ fun BookScreen(
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
   var showRangePicker by rememberSaveable { mutableStateOf(false) }
 
-  val topTitle = when (val state = uiState) {
-    is BookUiState.Loaded -> state.content.meta.title
-    else -> "کتاب"
-  }
+  val loadedState = uiState as? BookUiState.Loaded
+  val topTitle = loadedState?.content?.meta?.title ?: "کتاب"
 
   Scaffold(
     topBar = {
@@ -99,15 +88,30 @@ fun BookScreen(
             )
           }
         },
+        actions = {
+          if (loadedState != null) {
+            IconButton(
+              onClick = { viewModel.reextractBook() },
+              enabled = !loadedState.isReextracting,
+              modifier = Modifier
+                .minimumInteractiveComponentSize()
+                .testTag("reextract_book_button"),
+            ) {
+              Icon(
+                imageVector = Icons.Default.Refresh,
+                contentDescription = "استخراج دوباره",
+              )
+            }
+          }
+        },
         colors = TopAppBarDefaults.topAppBarColors(
           containerColor = MaterialTheme.colorScheme.background,
         ),
       )
     },
     bottomBar = {
-      val loaded = uiState as? BookUiState.Loaded
-      if (loaded != null) {
-        TtsActionFooter(ttsAvailability = loaded.ttsAvailability)
+      if (loadedState != null) {
+        TtsActionFooter(ttsAvailability = loadedState.ttsAvailability)
       }
     },
   ) { innerPadding ->
@@ -142,7 +146,10 @@ fun BookScreen(
           BookLoadedContent(
             state = state,
             onViewModeChange = { viewModel.setViewMode(it) },
+            onTextSourceChange = { viewModel.setTextSource(it) },
             onOpenRangePicker = { showRangePicker = true },
+            onReextractClick = { viewModel.reextractBook() },
+            onDismissError = { viewModel.dismissReextractionError() },
           )
 
           if (showRangePicker) {
@@ -150,12 +157,22 @@ fun BookScreen(
               pages = state.content.pages,
               initialStartPage = state.rangeStart,
               initialEndPage = state.rangeEnd,
-              onComputePreview = { pages, s, e -> viewModel.previewRange(pages, s, e) },
+              textSource = state.textSource,
+              onComputePreview = { pages, s, e -> viewModel.previewRange(pages, s, e, state.textSource) },
               onConfirmRange = { start, end ->
                 viewModel.applyPageRange(start, end)
                 showRangePicker = false
               },
               onDismiss = { showRangePicker = false },
+            )
+          }
+
+          state.passwordPrompt?.let { prompt ->
+            PdfPasswordSheet(
+              bookTitle = prompt.bookTitle,
+              errorMessage = prompt.errorMessage,
+              onSubmitPassword = { password -> viewModel.submitPassword(password) },
+              onDismiss = { viewModel.cancelPasswordPrompt() },
             )
           }
         }
@@ -168,28 +185,18 @@ fun BookScreen(
 private fun BookLoadedContent(
   state: BookUiState.Loaded,
   onViewModeChange: (BookViewMode) -> Unit,
+  onTextSourceChange: (BookTextSource) -> Unit,
   onOpenRangePicker: () -> Unit,
+  onReextractClick: () -> Unit,
+  onDismissError: () -> Unit,
 ) {
   Column(
     modifier = Modifier
       .fillMaxSize()
       .widthIn(max = 680.dp)
       .padding(horizontal = 16.dp),
-    verticalArrangement = Arrangement.spacedBy(12.dp),
+    verticalArrangement = Arrangement.spacedBy(8.dp),
   ) {
-    val quality = state.content.meta.qualityReport
-    if (quality.status != PdfQualityStatus.OK && quality.warningMessage != null) {
-      val title = if (quality.status == PdfQualityStatus.LIKELY_SCANNED_IMAGE) {
-        "هشدار PDF تصویری (OCR)"
-      } else {
-        "هشدار خرابی نگاشت فونت"
-      }
-      WarningBanner(
-        title = title,
-        message = quality.warningMessage,
-      )
-    }
-
     SingleChoiceSegmentedButtonRow(
       modifier = Modifier
         .fillMaxWidth()
@@ -210,6 +217,33 @@ private fun BookLoadedContent(
         modifier = Modifier.minimumInteractiveComponentSize(),
       ) {
         Text("پیشنمایش بازه")
+      }
+    }
+
+    SingleChoiceSegmentedButtonRow(
+      modifier = Modifier
+        .fillMaxWidth()
+        .testTag("text_source_segmented"),
+    ) {
+      SegmentedButton(
+        selected = state.textSource == BookTextSource.CLEANED,
+        onClick = { onTextSourceChange(BookTextSource.CLEANED) },
+        shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+        modifier = Modifier
+          .minimumInteractiveComponentSize()
+          .testTag("cleaned_text_tab"),
+      ) {
+        Text("متن پاکسازیشده")
+      }
+      SegmentedButton(
+        selected = state.textSource == BookTextSource.RAW,
+        onClick = { onTextSourceChange(BookTextSource.RAW) },
+        shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+        modifier = Modifier
+          .minimumInteractiveComponentSize()
+          .testTag("raw_text_tab"),
+      ) {
+        Text("متن خام")
       }
     }
 
@@ -266,242 +300,58 @@ private fun BookLoadedContent(
           contentPadding = PaddingValues(bottom = 16.dp),
           verticalArrangement = Arrangement.spacedBy(12.dp),
         ) {
+          if (state.isReextracting && state.reextractionProgress != null) {
+            item(key = "reextract_progress") {
+              ExtractionProgressCard(progress = state.reextractionProgress)
+            }
+          }
+          if (state.reextractionError != null) {
+            item(key = "reextract_error") {
+              ErrorBanner(
+                message = state.reextractionError,
+                onDismiss = onDismissError,
+              )
+            }
+          }
+          if (state.content.isCacheOutdated) {
+            item(key = "outdated_cache_banner") {
+              OutdatedCacheBanner(
+                onReextractClick = onReextractClick,
+                isReextracting = state.isReextracting,
+              )
+            }
+          }
+          val quality = state.content.meta.qualityReport
+          if (quality.status != PdfQualityStatus.OK && quality.warningMessage != null) {
+            item(key = "quality_warning_banner") {
+              val title = if (quality.status == PdfQualityStatus.LIKELY_SCANNED_IMAGE) {
+                "هشدار PDF تصویری (OCR)"
+              } else {
+                "هشدار خرابی نگاشت فونت"
+              }
+              WarningBanner(
+                title = title,
+                message = quality.warningMessage,
+              )
+            }
+          }
           items(state.content.pages, key = { it.pageNumber }) { page ->
-            PageTextCard(page = page)
+            PageTextCard(
+              page = page,
+              textSource = state.textSource,
+            )
           }
         }
       }
 
       BookViewMode.SELECTED_RANGE -> {
         RangePreviewContent(
-          summary = state.rangeSummary,
+          state = state,
+          onReextractClick = onReextractClick,
+          onDismissError = onDismissError,
           modifier = Modifier
             .weight(1f)
             .fillMaxWidth(),
-        )
-      }
-    }
-  }
-}
-
-@Composable
-private fun PageTextCard(page: ExtractedPage) {
-  Card(
-    shape = RoundedCornerShape(18.dp),
-    colors = CardDefaults.cardColors(
-      containerColor = if (page.isEmpty) {
-        MaterialTheme.colorScheme.surfaceContainer
-      } else {
-        MaterialTheme.colorScheme.surfaceContainerLow
-      },
-    ),
-    modifier = Modifier.fillMaxWidth(),
-  ) {
-    Column(
-      modifier = Modifier.padding(16.dp),
-      verticalArrangement = Arrangement.spacedBy(10.dp),
-    ) {
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically,
-      ) {
-        Surface(
-          shape = RoundedCornerShape(10.dp),
-          color = MaterialTheme.colorScheme.primaryContainer,
-        ) {
-          Text(
-            text = "صفحهٔ ${PersianDigits.formatInt(page.pageNumber)}",
-            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-            color = MaterialTheme.colorScheme.onPrimaryContainer,
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
-          )
-        }
-
-        if (!page.isEmpty) {
-          Text(
-            text = "${PersianDigits.formatInt(page.charCount)} نویسه",
-            style = MaterialTheme.typography.labelSmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-        }
-      }
-
-      if (page.isEmpty) {
-        Row(
-          verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-          Icon(
-            imageVector = Icons.Default.ImageNotSupported,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.size(18.dp),
-          )
-          Text(
-            text = "صفحهٔ بدون متن",
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-        }
-      } else {
-        Text(
-          text = page.cleanedText,
-          style = MaterialTheme.typography.bodyLarge,
-          color = MaterialTheme.colorScheme.onSurface,
-        )
-      }
-    }
-  }
-}
-
-@Composable
-private fun RangePreviewContent(
-  summary: PageRangeSummary,
-  modifier: Modifier = Modifier,
-) {
-  LazyColumn(
-    modifier = modifier.testTag("range_preview_list"),
-    contentPadding = PaddingValues(bottom = 16.dp),
-    verticalArrangement = Arrangement.spacedBy(12.dp),
-  ) {
-    if (summary.emptyPageCount > 0) {
-      item {
-        WarningBanner(
-          title = "صفحه‌های بدون متن در بازه",
-          message = "از ${PersianDigits.formatInt(summary.selectedPageCount)} صفحهٔ انتخاب‌شده، ${PersianDigits.formatInt(summary.emptyPageCount)} صفحه بدون متن است و به موتور صوتی ارسال نمی‌شود.",
-        )
-      }
-    }
-
-    item {
-      Card(
-        shape = RoundedCornerShape(18.dp),
-        colors = CardDefaults.cardColors(
-          containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.45f),
-        ),
-        modifier = Modifier.fillMaxWidth(),
-      ) {
-        Column(
-          modifier = Modifier.padding(16.dp),
-          verticalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-          Text(
-            text = "پیشنمایش متنی بازهٔ ${PersianDigits.formatInt(summary.startPage)} تا ${PersianDigits.formatInt(summary.endPage)}",
-            style = MaterialTheme.typography.titleSmall,
-            color = MaterialTheme.colorScheme.onSurface,
-          )
-          Text(
-            text = if (summary.previewText.isBlank()) {
-              "متنی در این بازه یافت نشد."
-            } else {
-              summary.previewText
-            },
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-          )
-        }
-      }
-    }
-
-    if (summary.sentences.isNotEmpty()) {
-      item {
-        Text(
-          text = "جمله‌های آماده‌سازی‌شده برای سنتز (${PersianDigits.formatInt(summary.sentences.size)} جمله)",
-          style = MaterialTheme.typography.titleSmall,
-          color = MaterialTheme.colorScheme.primary,
-          modifier = Modifier.padding(top = 4.dp),
-        )
-      }
-
-      itemsIndexed(summary.sentences) { index, sentence ->
-        Card(
-          shape = RoundedCornerShape(14.dp),
-          colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceContainerLow,
-          ),
-          modifier = Modifier.fillMaxWidth(),
-        ) {
-          Row(
-            modifier = Modifier.padding(14.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.Top,
-          ) {
-            Surface(
-              shape = RoundedCornerShape(8.dp),
-              color = MaterialTheme.colorScheme.secondaryContainer,
-            ) {
-              Text(
-                text = PersianDigits.formatInt(index + 1),
-                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                color = MaterialTheme.colorScheme.onSecondaryContainer,
-                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-              )
-            }
-            Text(
-              text = sentence,
-              style = MaterialTheme.typography.bodyMedium,
-              color = MaterialTheme.colorScheme.onSurface,
-              modifier = Modifier.weight(1f),
-            )
-          }
-        }
-      }
-    }
-  }
-}
-
-@Composable
-private fun TtsActionFooter(
-  ttsAvailability: TtsAvailability,
-) {
-  val disabledReason = when (ttsAvailability) {
-    is TtsAvailability.Ready -> null
-    is TtsAvailability.Unavailable -> ttsAvailability.reason
-  }
-
-  Surface(
-    tonalElevation = 3.dp,
-    shadowElevation = 6.dp,
-    color = MaterialTheme.colorScheme.surfaceContainerLow,
-  ) {
-    Column(
-      modifier = Modifier
-        .fillMaxWidth()
-        .navigationBarsPadding()
-        .padding(horizontal = 16.dp, vertical = 12.dp),
-      verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-      Row(
-        modifier = Modifier.fillMaxWidth(),
-        horizontalArrangement = Arrangement.spacedBy(12.dp),
-      ) {
-        KetabkhanPrimaryButton(
-          text = "خواندن صوتی",
-          onClick = {},
-          enabled = false,
-          icon = Icons.Default.GraphicEq,
-          modifier = Modifier
-            .weight(1f)
-            .testTag("read_aloud_button"),
-        )
-        KetabkhanSecondaryButton(
-          text = "خروجی MP3",
-          onClick = {},
-          enabled = false,
-          icon = Icons.Default.AudioFile,
-          modifier = Modifier
-            .weight(1f)
-            .testTag("export_mp3_button"),
-        )
-      }
-
-      if (disabledReason != null) {
-        Text(
-          text = disabledReason,
-          style = MaterialTheme.typography.bodySmall,
-          color = MaterialTheme.colorScheme.onSurfaceVariant,
-          modifier = Modifier.testTag("tts_unavailable_reason"),
         )
       }
     }

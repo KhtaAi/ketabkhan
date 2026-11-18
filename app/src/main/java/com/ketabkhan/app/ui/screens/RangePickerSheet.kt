@@ -45,6 +45,7 @@ fun RangePickerSheet(
   pages: List<ExtractedPage>,
   initialStartPage: Int,
   initialEndPage: Int,
+  textSource: BookTextSource = BookTextSource.CLEANED,
   onComputePreview: suspend (List<ExtractedPage>, Int, Int) -> PageRangeSummary,
   onConfirmRange: (Int, Int) -> Unit,
   onDismiss: () -> Unit,
@@ -83,7 +84,7 @@ fun RangePickerSheet(
   val isValidRange = startError == null && endError == null && parsedStart != null && parsedEnd != null
 
   var liveSummary by remember { mutableStateOf<PageRangeSummary?>(null) }
-  LaunchedEffect(parsedStart, parsedEnd, isValidRange) {
+  LaunchedEffect(parsedStart, parsedEnd, isValidRange, textSource) {
     if (isValidRange && parsedStart != null && parsedEnd != null) {
       liveSummary = onComputePreview(pages, parsedStart, parsedEnd)
     } else {

@@ -15,9 +15,25 @@ object PersianTextCleaner {
   private val multipleZwnjRegex = Regex("\\u200C{2,}")
   private val spaceAroundZwnjRegex = Regex("[ \\t]*\\u200C[ \\t]*")
   private val multiSpacesRegex = Regex("[ \\t]+")
-  private val spaceBeforePunctRegex = Regex("\\s+([،؛؟!.…,:)])")
-  private val spaceAfterOpenParenRegex = Regex("([(«])\\s+")
-  private val spaceBeforeCloseBracketRegex = Regex("\\s+([»\\]])")
+
+  // Spacing rules for digits & Persian/Arabic letters (e.g. "۱۲۹۹رضاخان" -> "۱۲۹۹ رضاخان")
+  private val digitBeforeLetterRegex = Regex("([0-9۰-۹٠-٩])([\\u0621-\\u064A\\u066E-\\u06D5])")
+  private val letterBeforeDigitRegex = Regex("([\\u0621-\\u064A\\u066E-\\u06D5])([0-9۰-۹٠-٩])")
+
+  // Guillemet & punctuation spacing rules
+  private val spaceBeforePunctRegex = Regex("\\s+([،؛؟!.…,:)\\]])")
+  private val spaceAfterOpenDelimRegex = Regex("([(«\\[])\\s+")
+  private val spaceBeforeCloseGuillemetRegex = Regex("\\s+»")
+  private val charBeforeOpenGuillemetRegex = Regex("([\\u0621-\\u06D5\\p{L}\\p{Nd}،؛:.!؟])«")
+  private val closeGuillemetBeforeCharRegex = Regex("»([\\u0621-\\u06D5\\p{L}\\p{Nd}])")
+  private val spaceAfterPunctRegex = Regex("([،؛؟!])([^\\s»)\"\\]،؛؟!.])")
+  private val periodBeforeWordRegex = Regex("(?<![0-9۰-۹٠-٩])\\.([\\u0621-\\u06D5]{2,})")
+
+  // Exact repeated 3+ word overlap caused by duplicate PDF text layers
+  private val repeatedMultiWordPhraseRegex = Regex(
+    "(?<![\\u0621-\\u06D5\\u200C\\p{Nd}])([\\u0621-\\u06D5\\u200C0-9۰-۹]+(?:\\s+[\\u0621-\\u06D5\\u200C0-9۰-۹]+){2,7})\\s+\\1(?![\\u0621-\\u06D5\\u200C\\p{Nd}])"
+  )
+
   private val pageNumberLineRegex = Regex(
     "^[-–—\\[\\]()«»\\s]*(?:صفحه|صفحهٔ|ص\\.?|Page|page|P\\.?)?[\\s:]*[0-9۰-۹٠-٩]+(?:\\s*(?:از|of|/)\\s*[0-9۰-۹٠-٩]+)?[\\s\\-–—\\[\\]()]*$"
   )
@@ -27,29 +43,21 @@ object PersianTextCleaner {
 
   fun cleanInline(raw: String): String {
     if (raw.isBlank()) return ""
-    var text = Normalizer.normalize(raw, Normalizer.Form.NFKC)
-    text = text
-      .replace('\u064A', '\u06CC') // ي -> ی
-      .replace('\u0649', '\u06CC') // ى -> ی
-      .replace('\u0643', '\u06A9') // ك -> ک
-      .replace("\u0640", "")       // remove tatweel/kashida
-    text = diacriticsRegex.replace(text, "")
-    text = zeroWidthJunkRegex.replace(text, "")
-    text = spaceAroundZwnjRegex.replace(text, "\u200C")
-    text = multipleZwnjRegex.replace(text, "\u200C")
-    text = multiSpacesRegex.replace(text, " ")
-    text = spaceBeforePunctRegex.replace(text, "$1")
-    text = spaceAfterOpenParenRegex.replace(text, "$1")
-    text = spaceBeforeCloseBracketRegex.replace(text, "$1")
+    var text = normalizeCharacters(raw)
+    text = fixUnpairedGuillemets(text)
+    text = fixSpacingAndPunctuation(text)
+    text = PersianZwnjRestorer.restore(text)
+    text = fixZwnjBoundaries(text)
     return text.trim()
   }
 
   fun cleanBookPages(rawPages: List<String>): List<CleanedPage> {
     if (rawPages.isEmpty()) return emptyList()
 
-    // Step 1: Normalize lines per page and strip standalone page numbers
+    // Step 1: Normalize lines per page, remove deterministic overlap duplicates, strip page numbers
     val pageLinesList = rawPages.map { raw ->
-      normalizeRawLines(raw)
+      val normalizedLines = normalizeRawLines(raw)
+      removeDeterministicDuplicateLines(normalizedLines)
         .filterNot { isStandalonePageNumber(it) }
         .toMutableList()
     }
@@ -109,7 +117,7 @@ object PersianTextCleaner {
       }
     }
 
-    // Step 3: Rejoin broken mid-sentence lines while preserving paragraph boundaries
+    // Step 3: Rejoin broken lines, fix spacing/guillemets, and restore ZWNJ per paragraph
     return pageLinesList.mapIndexed { index, lines ->
       val cleaned = reconstructParagraphs(lines)
       CleanedPage(
@@ -122,6 +130,64 @@ object PersianTextCleaner {
 
   fun cleanSinglePage(raw: String, pageNumber: Int = 1): CleanedPage {
     return cleanBookPages(listOf(raw)).first().copy(pageNumber = pageNumber)
+  }
+
+  private fun normalizeCharacters(raw: String): String {
+    var text = Normalizer.normalize(raw, Normalizer.Form.NFKC)
+    text = text
+      .replace('\u064A', '\u06CC') // ي -> ی
+      .replace('\u0649', '\u06CC') // ى -> ی
+      .replace('\u0643', '\u06A9') // ك -> ک
+      .replace("\u0640", "")       // remove tatweel/kashida
+    text = diacriticsRegex.replace(text, "")
+    text = zeroWidthJunkRegex.replace(text, "")
+    return fixZwnjBoundaries(text)
+  }
+
+  private fun fixZwnjBoundaries(raw: String): String {
+    var text = spaceAroundZwnjRegex.replace(raw, "\u200C")
+    text = multipleZwnjRegex.replace(text, "\u200C")
+    text = text.replace(Regex("^\\u200C+|\\u200C+$"), "")
+    return text
+  }
+
+  private fun fixUnpairedGuillemets(line: String): String {
+    if (!line.contains('«') && !line.contains('»')) return line
+    val chars = line.toCharArray()
+    var depth = 0
+    val unmatchedCloses = mutableListOf<Int>()
+    for (i in chars.indices) {
+      when (chars[i]) {
+        '«' -> {
+          if (unmatchedCloses.isNotEmpty()) {
+            val openIdx = unmatchedCloses.removeAt(0)
+            chars[openIdx] = '«'
+            chars[i] = '»'
+          } else {
+            depth++
+          }
+        }
+        '»' -> {
+          if (depth > 0) depth-- else unmatchedCloses.add(i)
+        }
+      }
+    }
+    return String(chars)
+  }
+
+  private fun fixSpacingAndPunctuation(raw: String): String {
+    var text = multiSpacesRegex.replace(raw, " ")
+    text = digitBeforeLetterRegex.replace(text, "$1 $2")
+    text = letterBeforeDigitRegex.replace(text, "$1 $2")
+    text = spaceBeforePunctRegex.replace(text, "$1")
+    text = spaceAfterOpenDelimRegex.replace(text, "$1")
+    text = spaceBeforeCloseGuillemetRegex.replace(text, "»")
+    text = charBeforeOpenGuillemetRegex.replace(text, "$1 «")
+    text = closeGuillemetBeforeCharRegex.replace(text, "» $1")
+    text = spaceAfterPunctRegex.replace(text, "$1 $2")
+    text = periodBeforeWordRegex.replace(text, ". $1")
+    text = multiSpacesRegex.replace(text, " ")
+    return text
   }
 
   private fun normalizeRawLines(raw: String): List<String> {
@@ -147,6 +213,25 @@ object PersianTextCleaner {
       result.removeAt(result.lastIndex)
     }
     return result
+  }
+
+  private fun removeDeterministicDuplicateLines(lines: List<String>): List<String> {
+    if (lines.size < 2) return lines
+    val deduped = ArrayList<String>(lines.size)
+    var prevNonBlank: String? = null
+    for (line in lines) {
+      if (line.isBlank()) {
+        deduped.add(line)
+        continue
+      }
+      val deduplicatedPhrase = repeatedMultiWordPhraseRegex.replace(line, "$1")
+      if (prevNonBlank != null && deduplicatedPhrase.length >= 8 && deduplicatedPhrase == prevNonBlank) {
+        continue
+      }
+      deduped.add(deduplicatedPhrase)
+      prevNonBlank = deduplicatedPhrase
+    }
+    return deduped
   }
 
   private fun isStandalonePageNumber(line: String): Boolean {
@@ -229,14 +314,11 @@ object PersianTextCleaner {
   private fun finalizeParagraphSpacing(raw: String): String {
     var text = raw.trim()
     if (text.isEmpty()) return ""
-    text = multiSpacesRegex.replace(text, " ")
-    text = spaceBeforePunctRegex.replace(text, "$1")
-    text = spaceAfterOpenParenRegex.replace(text, "$1")
-    text = spaceBeforeCloseBracketRegex.replace(text, "$1")
-    // Ensure a single space after Persian/standard punctuation when followed directly by a letter
-    text = text.replace(Regex("([،؛؟!])([^\\s»)\"\\]،؛؟!.])"), "$1 $2")
-    // Strip stray ZWNJ at start/end of paragraph or next to spaces
-    text = text.replace(Regex("^\\u200C+|\\u200C+$"), "")
+    text = fixUnpairedGuillemets(text)
+    text = fixSpacingAndPunctuation(text)
+    text = PersianZwnjRestorer.restore(text)
+    text = fixSpacingAndPunctuation(text)
+    text = fixZwnjBoundaries(text)
     return text.trim()
   }
 }

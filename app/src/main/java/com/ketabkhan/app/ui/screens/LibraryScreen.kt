@@ -287,12 +287,19 @@ private fun BookLibraryCard(
         MetadataChip(label = PersianDigits.formatPersianDate(book.addedAtMillis))
       }
 
-      if (book.isPasswordProtected || book.qualityReport.status != PdfQualityStatus.OK) {
+      if (book.needsReextraction || book.isPasswordProtected || book.qualityReport.status != PdfQualityStatus.OK) {
         Row(
           modifier = Modifier.fillMaxWidth(),
           horizontalArrangement = Arrangement.spacedBy(8.dp),
           verticalAlignment = Alignment.CenterVertically,
         ) {
+          if (book.needsReextraction) {
+            StatusBadge(
+              icon = Icons.Default.WarningAmber,
+              text = "نیاز به استخراج دوباره",
+              isWarning = true,
+            )
+          }
           if (book.isPasswordProtected) {
             StatusBadge(
               icon = Icons.Default.Lock,

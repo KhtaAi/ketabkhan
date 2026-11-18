@@ -43,4 +43,37 @@ class PersianTextCleanerTest {
     assertEquals(1, pages.size)
     assertTrue(pages[0].isEmpty)
   }
+
+  @Test
+  fun `inserts space between digits and Persian letters while keeping decimals intact`() {
+    val cleaned = PersianTextCleaner.cleanInline("در سال ۱۲۹۹رضاخان با عدد ۳.۱۴ وارد صفحه۳کتاب شد.")
+    assertEquals("در سال ۱۲۹۹ رضاخان با عدد ۳.۱۴ وارد صفحه ۳ کتاب شد.", cleaned)
+  }
+
+  @Test
+  fun `fixes guillemet orientation and surrounding punctuation spacing`() {
+    val cleaned = PersianTextCleaner.cleanInline("او» نوش آفرین«را دید ، و گفت : « سلام ! »")
+    assertEquals("او «نوش‌آفرین» را دید، و گفت: «سلام!»", cleaned)
+  }
+
+  @Test
+  fun `reproduces real-device defects together and cleans deterministically`() {
+    val broken = "در سال ۱۲۹۹رضاخان »تهران« را م یزد و نو شآفرین در صفحه ی اول بود."
+    val cleaned = PersianTextCleaner.cleanInline(broken)
+    assertEquals("در سال ۱۲۹۹ رضاخان «تهران» را می‌زد و نوش‌آفرین در صفحهٔ اول بود.", cleaned)
+  }
+
+  @Test
+  fun `removes deterministic consecutive duplicate lines and 3-word overlaps`() {
+    val rawPage = listOf(
+      "این سطر تکراری است",
+      "این سطر تکراری است",
+      "در آن روز بارانی در آن روز بارانی هوا خنک بود.",
+    ).joinToString("\n")
+    val cleaned = PersianTextCleaner.cleanSinglePage(rawPage, 1).cleanedText
+    assertEquals(
+      "این سطر تکراری است\n\nدر آن روز بارانی هوا خنک بود.",
+      cleaned,
+    )
+  }
 }
