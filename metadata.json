@@ -1,0 +1,8 @@
+{
+  "name": "کتابخوان",
+  "description": "اپلیکیشن اندرویدی کتابخوان فارسی با ایمپورت PDF متنی، پاکسازی متن فارسی و انتخاب بازه صفحات",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

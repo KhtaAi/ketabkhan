@@ -1,0 +1,5 @@
+/build
+src/main/res/font/*.ttf
+src/main/res/font/*.otf
+fontsrc/*.ttf
+fontsrc/*.otf

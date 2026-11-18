@@ -1,0 +1,46 @@
+*.iml
+.gradle
+.kotlin
+/local.properties
+/.idea/caches
+/.idea/libraries
+/.idea/modules.xml
+/.idea/workspace.xml
+/.idea/navEditor.xml
+/.idea/assetWizardSettings.xml
+.DS_Store
+/build
+/captures
+.externalNativeBuild
+.cxx
+local.properties
+
+# Secrets & API keys
+.env
+.env.*
+secrets.properties
+*.secret
+google-services.json
+
+# Keystores & signing material (AGENTS.md section 9)
+*.jks
+*.keystore
+*.p12
+*.pfx
+*.pem
+keystore.properties
+__SECRETS_TO_COPY.txt
+release.keystore
+keystore_base64.txt
+key.pem
+cert.pem
+ci.keystore.base64
+ci-signing.env
+debug.keystore
+debug.keystore.base64
+
+# Decoded binary font assets (generated from app/fontsrc/*.b64 by decodeVazirmatnFonts)
+app/src/main/res/font/*.ttf
+app/src/main/res/font/*.otf
+app/fontsrc/*.ttf
+app/fontsrc/*.otf

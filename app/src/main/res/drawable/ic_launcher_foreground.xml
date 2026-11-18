@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- Open book silhouette centered in 66dp safe zone (coords ~24..84) -->
+    <!-- Left page -->
+    <path
+        android:fillColor="#FBF6EE"
+        android:pathData="M53,36 C45,33 35,33 27,36 L27,69 C35,66 45,66 53,70 Z" />
+    <!-- Right page -->
+    <path
+        android:fillColor="#EFE5D5"
+        android:pathData="M55,36 C63,33 73,33 81,36 L81,69 C73,66 63,66 55,70 Z" />
+    <!-- Spine -->
+    <path
+        android:fillColor="#D4A373"
+        android:pathData="M53,36 L55,36 L55,70 L53,70 Z" />
+    <!-- Bookmark ribbon -->
+    <path
+        android:fillColor="#D97742"
+        android:pathData="M66,34.5 L72,34.5 L72,53 L69,50 L66,53 Z" />
+    <!-- Text lines on left page -->
+    <path
+        android:fillColor="#0F5C59"
+        android:pathData="M32,44 L48,44 L48,46.5 L32,46.5 Z M32,50 L48,50 L48,52.5 L32,52.5 Z M32,56 L44,56 L44,58.5 L32,58.5 Z" />
+    <!-- Audio wave arcs above book hinting Phase 2 voice -->
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M48,27 Q54,22 60,27"
+        android:strokeColor="#F4C08A"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.4" />
+    <path
+        android:fillColor="#00000000"
+        android:pathData="M43,23.5 Q54,16 65,23.5"
+        android:strokeColor="#F4C08A"
+        android:strokeLineCap="round"
+        android:strokeWidth="2.0" />
+</vector>
