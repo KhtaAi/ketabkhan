@@ -34,6 +34,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import com.ketabkhan.app.data.pdf.ExtractedPage
+import com.ketabkhan.app.domain.reading.ReadingSettings
 import com.ketabkhan.app.domain.text.PersianDigits
 import com.ketabkhan.app.ui.components.KetabkhanPrimaryButton
 import com.ketabkhan.app.ui.components.KetabkhanSecondaryButton
@@ -46,6 +47,7 @@ fun RangePickerSheet(
   initialStartPage: Int,
   initialEndPage: Int,
   textSource: BookTextSource = BookTextSource.CLEANED,
+  readingSettings: ReadingSettings = ReadingSettings(),
   onComputePreview: suspend (List<ExtractedPage>, Int, Int) -> PageRangeSummary,
   onConfirmRange: (Int, Int) -> Unit,
   onDismiss: () -> Unit,
@@ -84,7 +86,7 @@ fun RangePickerSheet(
   val isValidRange = startError == null && endError == null && parsedStart != null && parsedEnd != null
 
   var liveSummary by remember { mutableStateOf<PageRangeSummary?>(null) }
-  LaunchedEffect(parsedStart, parsedEnd, isValidRange, textSource) {
+  LaunchedEffect(parsedStart, parsedEnd, isValidRange, textSource, readingSettings) {
     if (isValidRange && parsedStart != null && parsedEnd != null) {
       liveSummary = onComputePreview(pages, parsedStart, parsedEnd)
     } else {

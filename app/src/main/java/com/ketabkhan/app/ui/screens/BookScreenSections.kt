@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -25,25 +26,36 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import com.ketabkhan.app.data.pdf.DocumentBlockType
 import com.ketabkhan.app.data.pdf.ExtractedPage
+import com.ketabkhan.app.domain.reading.ReadingItem
+import com.ketabkhan.app.domain.reading.SkippedReadingBlock
 import com.ketabkhan.app.domain.text.PersianDigits
 import com.ketabkhan.app.domain.tts.TtsAvailability
+import com.ketabkhan.app.ui.components.ErrorBanner
+import com.ketabkhan.app.ui.components.ExtractionProgressCard
 import com.ketabkhan.app.ui.components.KetabkhanPrimaryButton
 import com.ketabkhan.app.ui.components.KetabkhanSecondaryButton
+import com.ketabkhan.app.ui.components.OutdatedCacheBanner
 import com.ketabkhan.app.ui.components.WarningBanner
 
 @Composable
 internal fun PageTextCard(
   page: ExtractedPage,
   textSource: BookTextSource,
+  displayFormat: BookDisplayFormat = BookDisplayFormat.STRUCTURED,
 ) {
   val displayedText = when (textSource) {
     BookTextSource.CLEANED -> page.cleanedText
     BookTextSource.RAW -> page.rawText
   }
   val isLegacyMissingRaw = textSource == BookTextSource.RAW && page.rawText.isBlank() && !page.isEmpty
+  val showStructured = textSource == BookTextSource.CLEANED &&
+    displayFormat == BookDisplayFormat.STRUCTURED &&
+    page.blocks.isNotEmpty()
   val effectiveCharCount = when {
     page.isEmpty -> 0
     textSource == BookTextSource.CLEANED -> page.charCount
@@ -80,10 +92,10 @@ internal fun PageTextCard(
             MaterialTheme.colorScheme.primaryContainer
           },
         ) {
-          val badgeLabel = if (textSource == BookTextSource.RAW) {
-            "صفحهٔ ${PersianDigits.formatInt(page.pageNumber)} • خام"
-          } else {
-            "صفحهٔ ${PersianDigits.formatInt(page.pageNumber)}"
+          val badgeLabel = when {
+            textSource == BookTextSource.RAW -> "صفحهٔ ${PersianDigits.formatInt(page.pageNumber)} • خام"
+            showStructured -> "صفحهٔ ${PersianDigits.formatInt(page.pageNumber)} • ساختاردار"
+            else -> "صفحهٔ ${PersianDigits.formatInt(page.pageNumber)} • ساده"
           }
           Text(
             text = badgeLabel,
@@ -134,6 +146,10 @@ internal fun PageTextCard(
           )
         }
 
+        showStructured -> {
+          StructuredPageBlocksColumn(page = page)
+        }
+
         else -> {
           Text(
             text = displayedText,
@@ -156,6 +172,7 @@ internal fun RangePreviewContent(
 ) {
   val summary = state.rangeSummary
   val textSource = state.textSource
+  val plan = summary.readingPlan
   LazyColumn(
     modifier = modifier.testTag("range_preview_list"),
     contentPadding = PaddingValues(bottom = 16.dp),
@@ -163,13 +180,13 @@ internal fun RangePreviewContent(
   ) {
     if (state.isReextracting && state.reextractionProgress != null) {
       item(key = "range_reextract_progress") {
-        com.ketabkhan.app.ui.components.ExtractionProgressCard(progress = state.reextractionProgress)
+        ExtractionProgressCard(progress = state.reextractionProgress)
       }
     }
 
     if (state.reextractionError != null) {
       item(key = "range_reextract_error") {
-        com.ketabkhan.app.ui.components.ErrorBanner(
+        ErrorBanner(
           message = state.reextractionError,
           onDismiss = onDismissError,
         )
@@ -178,7 +195,7 @@ internal fun RangePreviewContent(
 
     if (state.content.isCacheOutdated) {
       item(key = "range_outdated_cache_banner") {
-        com.ketabkhan.app.ui.components.OutdatedCacheBanner(
+        OutdatedCacheBanner(
           onReextractClick = onReextractClick,
           isReextracting = state.isReextracting,
         )
@@ -186,7 +203,7 @@ internal fun RangePreviewContent(
     }
 
     if (summary.emptyPageCount > 0) {
-      item {
+      item(key = "empty_pages_warning") {
         WarningBanner(
           title = "صفحه‌های بدون متن در بازه",
           message = "از ${PersianDigits.formatInt(summary.selectedPageCount)} صفحهٔ انتخاب‌شده، ${PersianDigits.formatInt(summary.emptyPageCount)} صفحه بدون متن است و به موتور صوتی ارسال نمی‌شود.",
@@ -194,7 +211,7 @@ internal fun RangePreviewContent(
       }
     }
 
-    item {
+    item(key = "range_summary_card") {
       Card(
         shape = RoundedCornerShape(18.dp),
         colors = CardDefaults.cardColors(
@@ -226,10 +243,44 @@ internal fun RangePreviewContent(
       }
     }
 
-    if (summary.sentences.isNotEmpty()) {
-      item {
+    if (textSource == BookTextSource.CLEANED) {
+      if (plan.items.isNotEmpty()) {
+        item(key = "reading_plan_header") {
+          Text(
+            text = "برنامهٔ خواندن ساختاردار (${PersianDigits.formatInt(plan.items.size)} بخش • مکث تیتر: ${state.readingSettings.titlePauseDuration.persianLabel})",
+            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+            color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier
+              .padding(top = 4.dp)
+              .testTag("reading_plan_header"),
+          )
+        }
+
+        items(plan.items, key = { "ri_${it.order}_${it.sourceBlockId}" }) { item ->
+          ReadingPlanItemCard(item = item)
+        }
+      }
+
+      if (plan.skippedBlocks.isNotEmpty()) {
+        item(key = "skipped_blocks_header") {
+          Text(
+            text = "بخش‌های ردشده طبق تنظیمات (${PersianDigits.formatInt(plan.skippedBlocks.size)} مورد)",
+            style = MaterialTheme.typography.titleSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier
+              .padding(top = 6.dp)
+              .testTag("skipped_blocks_header"),
+          )
+        }
+
+        itemsIndexed(plan.skippedBlocks, key = { idx, blk -> "skip_${idx}_${blk.block.id}" }) { idx, skipped ->
+          SkippedBlockCard(skipped = skipped, index = idx)
+        }
+      }
+    } else if (summary.sentences.isNotEmpty()) {
+      item(key = "raw_sentences_header") {
         Text(
-          text = "جمله‌های آماده‌سازی‌شده برای سنتز (${PersianDigits.formatInt(summary.sentences.size)} جمله)",
+          text = "بندهای متن خام (${PersianDigits.formatInt(summary.sentences.size)} مورد)",
           style = MaterialTheme.typography.titleSmall,
           color = MaterialTheme.colorScheme.primary,
           modifier = Modifier.padding(top = 4.dp),
@@ -269,6 +320,112 @@ internal fun RangePreviewContent(
           }
         }
       }
+    }
+  }
+}
+
+@Composable
+private fun ReadingPlanItemCard(item: ReadingItem) {
+  Card(
+    shape = RoundedCornerShape(14.dp),
+    colors = CardDefaults.cardColors(
+      containerColor = if (item.role == DocumentBlockType.PAGE_TITLE || item.role == DocumentBlockType.SUBTITLE) {
+        MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.28f)
+      } else {
+        MaterialTheme.colorScheme.surfaceContainerLow
+      },
+    ),
+    modifier = Modifier
+      .fillMaxWidth()
+      .semantics(mergeDescendants = true) {}
+      .testTag("reading_item_${item.order}"),
+  ) {
+    Column(
+      modifier = Modifier.padding(12.dp),
+      verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        Row(
+          horizontalArrangement = Arrangement.spacedBy(6.dp),
+          verticalAlignment = Alignment.CenterVertically,
+        ) {
+          Surface(
+            shape = RoundedCornerShape(8.dp),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+          ) {
+            Text(
+              text = PersianDigits.formatInt(item.order),
+              style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+              color = MaterialTheme.colorScheme.onSecondaryContainer,
+              modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
+            )
+          }
+          BlockRoleBadge(type = item.role)
+        }
+
+        val pauseSec = PersianDigits.toPersianDigits(
+          String.format(java.util.Locale.US, "%.1f", item.pauseAfterMillis / 1000f).replace('.', '٫')
+        )
+        Text(
+          text = "ص ${PersianDigits.formatInt(item.pageNumber)} • مکث ${pauseSec}ث",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+
+      Text(
+        text = item.spokenText,
+        style = if (item.role == DocumentBlockType.PAGE_TITLE) {
+          MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
+        } else {
+          MaterialTheme.typography.bodyMedium
+        },
+        color = MaterialTheme.colorScheme.onSurface,
+      )
+    }
+  }
+}
+
+@Composable
+private fun SkippedBlockCard(
+  skipped: SkippedReadingBlock,
+  index: Int,
+) {
+  Card(
+    shape = RoundedCornerShape(12.dp),
+    colors = CardDefaults.cardColors(
+      containerColor = MaterialTheme.colorScheme.surfaceContainerHighest.copy(alpha = 0.45f),
+    ),
+    modifier = Modifier
+      .fillMaxWidth()
+      .semantics(mergeDescendants = true) {}
+      .testTag("skipped_block_$index"),
+  ) {
+    Column(
+      modifier = Modifier.padding(10.dp),
+      verticalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+      Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+      ) {
+        BlockRoleBadge(type = skipped.block.type)
+        Text(
+          text = "ص ${PersianDigits.formatInt(skipped.pageNumber)} • ${skipped.reason}",
+          style = MaterialTheme.typography.labelSmall,
+          color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+      }
+      Text(
+        text = skipped.block.text,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+      )
     }
   }
 }

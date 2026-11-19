@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Refresh
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -60,6 +61,7 @@ fun BookScreen(
 ) {
   val uiState by viewModel.uiState.collectAsStateWithLifecycle()
   var showRangePicker by rememberSaveable { mutableStateOf(false) }
+  var showReadingSettings by rememberSaveable { mutableStateOf(false) }
 
   val loadedState = uiState as? BookUiState.Loaded
   val topTitle = loadedState?.content?.meta?.title ?: "کتاب"
@@ -90,6 +92,17 @@ fun BookScreen(
         },
         actions = {
           if (loadedState != null) {
+            IconButton(
+              onClick = { showReadingSettings = true },
+              modifier = Modifier
+                .minimumInteractiveComponentSize()
+                .testTag("reading_settings_button"),
+            ) {
+              Icon(
+                imageVector = Icons.Default.Tune,
+                contentDescription = "تنظیمات خواندن",
+              )
+            }
             IconButton(
               onClick = { viewModel.reextractBook() },
               enabled = !loadedState.isReextracting,
@@ -147,6 +160,7 @@ fun BookScreen(
             state = state,
             onViewModeChange = { viewModel.setViewMode(it) },
             onTextSourceChange = { viewModel.setTextSource(it) },
+            onDisplayFormatChange = { viewModel.setDisplayFormat(it) },
             onOpenRangePicker = { showRangePicker = true },
             onReextractClick = { viewModel.reextractBook() },
             onDismissError = { viewModel.dismissReextractionError() },
@@ -158,12 +172,26 @@ fun BookScreen(
               initialStartPage = state.rangeStart,
               initialEndPage = state.rangeEnd,
               textSource = state.textSource,
-              onComputePreview = { pages, s, e -> viewModel.previewRange(pages, s, e, state.textSource) },
+              readingSettings = state.readingSettings,
+              onComputePreview = { pages, s, e ->
+                viewModel.previewRange(pages, s, e, state.textSource, state.readingSettings)
+              },
               onConfirmRange = { start, end ->
                 viewModel.applyPageRange(start, end)
                 showRangePicker = false
               },
               onDismiss = { showRangePicker = false },
+            )
+          }
+
+          if (showReadingSettings) {
+            ReadingSettingsSheet(
+              initialSettings = state.readingSettings,
+              onSaveSettings = { updated ->
+                viewModel.updateReadingSettings(updated)
+                showReadingSettings = false
+              },
+              onDismiss = { showReadingSettings = false },
             )
           }
 
@@ -186,6 +214,7 @@ private fun BookLoadedContent(
   state: BookUiState.Loaded,
   onViewModeChange: (BookViewMode) -> Unit,
   onTextSourceChange: (BookTextSource) -> Unit,
+  onDisplayFormatChange: (BookDisplayFormat) -> Unit,
   onOpenRangePicker: () -> Unit,
   onReextractClick: () -> Unit,
   onDismissError: () -> Unit,
@@ -195,7 +224,7 @@ private fun BookLoadedContent(
       .fillMaxSize()
       .widthIn(max = 680.dp)
       .padding(horizontal = 16.dp),
-    verticalArrangement = Arrangement.spacedBy(8.dp),
+    verticalArrangement = Arrangement.spacedBy(6.dp),
   ) {
     SingleChoiceSegmentedButtonRow(
       modifier = Modifier
@@ -206,7 +235,9 @@ private fun BookLoadedContent(
         selected = state.viewMode == BookViewMode.FULL_PAGES,
         onClick = { onViewModeChange(BookViewMode.FULL_PAGES) },
         shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
-        modifier = Modifier.minimumInteractiveComponentSize(),
+        modifier = Modifier
+          .minimumInteractiveComponentSize()
+          .testTag("full_pages_tab"),
       ) {
         Text("متن کامل کتاب")
       }
@@ -214,7 +245,9 @@ private fun BookLoadedContent(
         selected = state.viewMode == BookViewMode.SELECTED_RANGE,
         onClick = { onViewModeChange(BookViewMode.SELECTED_RANGE) },
         shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
-        modifier = Modifier.minimumInteractiveComponentSize(),
+        modifier = Modifier
+          .minimumInteractiveComponentSize()
+          .testTag("selected_range_tab"),
       ) {
         Text("پیشنمایش بازه")
       }
@@ -247,6 +280,35 @@ private fun BookLoadedContent(
       }
     }
 
+    if (state.viewMode == BookViewMode.FULL_PAGES && state.textSource == BookTextSource.CLEANED) {
+      SingleChoiceSegmentedButtonRow(
+        modifier = Modifier
+          .fillMaxWidth()
+          .testTag("display_format_segmented"),
+      ) {
+        SegmentedButton(
+          selected = state.displayFormat == BookDisplayFormat.STRUCTURED,
+          onClick = { onDisplayFormatChange(BookDisplayFormat.STRUCTURED) },
+          shape = SegmentedButtonDefaults.itemShape(index = 0, count = 2),
+          modifier = Modifier
+            .minimumInteractiveComponentSize()
+            .testTag("structured_view_tab"),
+        ) {
+          Text("نمایش ساختاردار")
+        }
+        SegmentedButton(
+          selected = state.displayFormat == BookDisplayFormat.PLAIN,
+          onClick = { onDisplayFormatChange(BookDisplayFormat.PLAIN) },
+          shape = SegmentedButtonDefaults.itemShape(index = 1, count = 2),
+          modifier = Modifier
+            .minimumInteractiveComponentSize()
+            .testTag("plain_view_tab"),
+        ) {
+          Text("نمایش متن ساده")
+        }
+      }
+    }
+
     Surface(
       shape = RoundedCornerShape(16.dp),
       color = MaterialTheme.colorScheme.surfaceContainerLow,
@@ -255,7 +317,7 @@ private fun BookLoadedContent(
       Row(
         modifier = Modifier
           .fillMaxWidth()
-          .padding(horizontal = 14.dp, vertical = 10.dp),
+          .padding(horizontal = 14.dp, vertical = 8.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically,
       ) {
@@ -265,8 +327,13 @@ private fun BookLoadedContent(
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.onSurface,
           )
+          val countText = if (state.textSource == BookTextSource.CLEANED && state.rangeSummary.readingPlan.items.isNotEmpty()) {
+            "${PersianDigits.formatInt(state.rangeSummary.selectedPageCount)} صفحه • ${PersianDigits.formatInt(state.rangeSummary.readingPlan.items.size)} بخش خواندنی"
+          } else {
+            "${PersianDigits.formatInt(state.rangeSummary.selectedPageCount)} صفحه • ${PersianDigits.formatInt(state.rangeSummary.sentences.size)} جمله"
+          }
           Text(
-            text = "${PersianDigits.formatInt(state.rangeSummary.selectedPageCount)} صفحه • ${PersianDigits.formatInt(state.rangeSummary.sentences.size)} جمله",
+            text = countText,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
           )
@@ -339,6 +406,7 @@ private fun BookLoadedContent(
             PageTextCard(
               page = page,
               textSource = state.textSource,
+              displayFormat = state.displayFormat,
             )
           }
         }

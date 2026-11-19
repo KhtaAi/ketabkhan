@@ -42,13 +42,33 @@ object PersianTextCleaner {
   private val digitsRegex = Regex("[0-9۰-۹٠-٩]+")
 
   fun cleanInline(raw: String): String {
-    if (raw.isBlank()) return ""
+    return cleanInlineWithMetrics(raw).text
+  }
+
+  fun cleanInlineWithMetrics(
+    raw: String,
+    hasGlyphInversionSignal: Boolean = false,
+  ): LigatureRepairResult {
+    if (raw.isBlank()) {
+      return LigatureRepairResult(text = "", ligatureFixesCount = 0, detachedFinalLetterFixesCount = 0)
+    }
     var text = normalizeCharacters(raw)
     text = fixUnpairedGuillemets(text)
+    val ligatureRepair = PersianLigatureRestorer.restore(
+      text = text,
+      hasGlyphInversionSignal = hasGlyphInversionSignal,
+    )
+    text = ligatureRepair.text
+    val detachedRepair = PersianLigatureRestorer.repairUnmistakableDetachedTrailingChar(text)
+    text = detachedRepair.text
     text = fixSpacingAndPunctuation(text)
     text = PersianZwnjRestorer.restore(text)
     text = fixZwnjBoundaries(text)
-    return text.trim()
+    return LigatureRepairResult(
+      text = text.trim(),
+      ligatureFixesCount = ligatureRepair.ligatureFixesCount,
+      detachedFinalLetterFixesCount = detachedRepair.detachedFinalLetterFixesCount,
+    )
   }
 
   fun cleanBookPages(rawPages: List<String>): List<CleanedPage> {
@@ -215,7 +235,7 @@ object PersianTextCleaner {
     return result
   }
 
-  private fun removeDeterministicDuplicateLines(lines: List<String>): List<String> {
+  fun removeDeterministicDuplicateLines(lines: List<String>): List<String> {
     if (lines.size < 2) return lines
     val deduped = ArrayList<String>(lines.size)
     var prevNonBlank: String? = null
@@ -234,20 +254,28 @@ object PersianTextCleaner {
     return deduped
   }
 
-  private fun isStandalonePageNumber(line: String): Boolean {
+  fun deduplicateRepeatedPhrases(line: String): String {
+    return repeatedMultiWordPhraseRegex.replace(line, "$1")
+  }
+
+  fun isStandalonePageNumber(line: String): Boolean {
     val trimmed = line.trim()
     if (trimmed.isEmpty()) return false
     if (trimmed.length > 28) return false
     return pageNumberLineRegex.matches(trimmed)
   }
 
-  private fun normalizeForHeaderFooter(line: String): String {
+  fun isBulletLine(line: String): Boolean {
+    return bulletStartRegex.matches(line.trim())
+  }
+
+  fun normalizeForHeaderFooter(line: String): String {
     return digitsRegex.replace(line.trim(), "#")
       .replace(multiSpacesRegex, " ")
       .trim()
   }
 
-  private fun reconstructParagraphs(lines: List<String>): String {
+  fun reconstructParagraphs(lines: List<String>): String {
     if (lines.isEmpty()) return ""
 
     val paragraphs = mutableListOf<String>()
@@ -311,10 +339,12 @@ object PersianTextCleaner {
     return paragraphs.joinToString("\n\n")
   }
 
-  private fun finalizeParagraphSpacing(raw: String): String {
+  fun finalizeParagraphSpacing(raw: String): String {
     var text = raw.trim()
     if (text.isEmpty()) return ""
     text = fixUnpairedGuillemets(text)
+    val ligatureResult = PersianLigatureRestorer.restore(text)
+    text = ligatureResult.text
     text = fixSpacingAndPunctuation(text)
     text = PersianZwnjRestorer.restore(text)
     text = fixSpacingAndPunctuation(text)

@@ -207,7 +207,7 @@ class PdfExtractionRobolectricTest {
     )
     val indexFile = File(context.filesDir, "books/library_index.json")
     val patchedIndex = indexFile.readText(Charsets.UTF_8)
-      .replace("\"cacheSchemaVersion\":2", "\"cacheSchemaVersion\":1")
+      .replace("\"cacheSchemaVersion\":$CURRENT_EXTRACTION_SCHEMA_VERSION", "\"cacheSchemaVersion\":1")
     indexFile.writeText(patchedIndex, Charsets.UTF_8)
 
     repo.loadLibrary()
@@ -230,10 +230,64 @@ class PdfExtractionRobolectricTest {
     val upgradedContent = repo.getBookContent(meta.id)!!
     assertFalse(upgradedContent.isCacheOutdated)
     assertTrue(upgradedContent.pages[0].rawText.isNotBlank())
+    assertTrue(upgradedContent.pages[0].blocks.isNotEmpty())
     val cleaned = upgradedContent.pages[0].cleanedText
     assertTrue("Expected ZWNJ fix می‌زد in '$cleaned'", cleaned.contains("می\u200Cزد"))
     assertTrue("Expected ZWNJ fix نوش‌آفرین in '$cleaned'", cleaned.contains("نوش\u200Cآفرین"))
     assertTrue("Expected digit spacing ۱۲۹۹ رضاخان in '$cleaned'", cleaned.contains("۱۲۹۹ رضاخان"))
+  }
+
+  @Test
+  fun `marks schema v2 cache as outdated without deleting book and upgrades to v3 with blocks`() = runBlocking {
+    val pdfFile = buildPersianUnicodePdf(
+      target = tempFolder.newFile("v2_upgrade.pdf"),
+      title = "کتاب نسخه دو",
+      pageTexts = listOf("فصل اول\nاین یک بند متن فارسی برای آزمایش ارتقای کش نسخه دو است."),
+    )
+    val repo = BookRepository(context)
+    val meta = (repo.importAndExtractBook(Uri.fromFile(pdfFile)) {} as ImportOutcome.Success).book
+
+    // Simulate a Phase 4 (v2) cache without blocks array
+    File(meta.cacheFilePath).writeText(
+      """
+      {
+        "version": 2,
+        "bookId": "${meta.id}",
+        "pages": [
+          {
+            "pageNumber": 1,
+            "cleanedText": "فصل اول\nمتن قدیمی نسخه دو",
+            "rawText": "فصل اول\nمتن قدیمی نسخه دو",
+            "isEmpty": false,
+            "charCount": 27
+          }
+        ]
+      }
+      """.trimIndent(),
+      Charsets.UTF_8,
+    )
+    val indexFile = File(context.filesDir, "books/library_index.json")
+    indexFile.writeText(
+      indexFile.readText(Charsets.UTF_8).replace("\"cacheSchemaVersion\":$CURRENT_EXTRACTION_SCHEMA_VERSION", "\"cacheSchemaVersion\":2"),
+      Charsets.UTF_8,
+    )
+
+    repo.loadLibrary()
+    val v2Meta = repo.books.value.firstOrNull { it.id == meta.id }
+    assertNotNull(v2Meta)
+    assertTrue(v2Meta!!.needsReextraction)
+    assertFalse(repo.isCacheVersionCurrent(v2Meta))
+
+    val outdatedContent = repo.getBookContent(meta.id)!!
+    assertTrue(outdatedContent.isCacheOutdated)
+    assertTrue(outdatedContent.pages[0].blocks.isEmpty())
+
+    val reextracted = repo.reextractBook(meta.id)
+    assertTrue(reextracted is ImportOutcome.Success)
+    val upgraded = repo.getBookContent(meta.id)!!
+    assertEquals(CURRENT_EXTRACTION_SCHEMA_VERSION, upgraded.meta.cacheSchemaVersion)
+    assertFalse(upgraded.isCacheOutdated)
+    assertTrue(upgraded.pages[0].blocks.isNotEmpty())
   }
 
   @Test

@@ -14,6 +14,7 @@ import androidx.navigation.compose.composable
 import androidx.navigation.compose.rememberNavController
 import androidx.navigation.navArgument
 import com.ketabkhan.app.data.pdf.BookRepository
+import com.ketabkhan.app.data.reading.ReadingSettingsRepository
 import com.ketabkhan.app.domain.tts.UnavailableTtsEngine
 import com.ketabkhan.app.ui.screens.BookScreen
 import com.ketabkhan.app.ui.screens.BookViewModel
@@ -40,6 +41,7 @@ class MainActivity : ComponentActivity() {
 fun KetabkhanApp() {
   val context = LocalContext.current.applicationContext
   val repository = remember(context) { BookRepository(context) }
+  val readingSettingsRepository = remember(context) { ReadingSettingsRepository(context) }
   val ttsEngine = remember { UnavailableTtsEngine() }
   val navController = rememberNavController()
 
@@ -74,6 +76,7 @@ fun KetabkhanApp() {
           bookId = bookId,
           repository = repository,
           ttsEngine = ttsEngine,
+          readingSettingsRepository = readingSettingsRepository,
         ),
       )
       BookScreen(

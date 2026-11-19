@@ -329,6 +329,10 @@ class BookRepository(
   private fun writePagesCache(cacheFile: File, bookId: String, pages: List<ExtractedPage>) {
     val pagesArray = JSONArray()
     for (page in pages) {
+      val blocksArray = JSONArray()
+      for (block in page.blocks) {
+        blocksArray.put(blockToJson(block))
+      }
       pagesArray.put(
         JSONObject().apply {
           put("pageNumber", page.pageNumber)
@@ -336,6 +340,7 @@ class BookRepository(
           put("rawText", page.rawText)
           put("isEmpty", page.isEmpty)
           put("charCount", page.charCount)
+          put("blocks", blocksArray)
         }
       )
     }
@@ -355,13 +360,25 @@ class BookRepository(
       val pages = buildList(array.length()) {
         for (i in 0 until array.length()) {
           val obj = array.getJSONObject(i)
+          val pageNumber = obj.getInt("pageNumber")
+          val blocksArray = obj.optJSONArray("blocks")
+          val blocks = if (blocksArray != null) {
+            buildList(blocksArray.length()) {
+              for (j in 0 until blocksArray.length()) {
+                add(blockFromJson(blocksArray.getJSONObject(j), pageNumber, j))
+              }
+            }
+          } else {
+            emptyList()
+          }
           add(
             ExtractedPage(
-              pageNumber = obj.getInt("pageNumber"),
+              pageNumber = pageNumber,
               cleanedText = obj.getString("cleanedText"),
               isEmpty = obj.getBoolean("isEmpty"),
               charCount = obj.getInt("charCount"),
               rawText = obj.optString("rawText", ""),
+              blocks = blocks,
             )
           )
         }
@@ -370,6 +387,53 @@ class BookRepository(
     } catch (_: Throwable) {
       null
     }
+  }
+
+  private fun blockToJson(block: DocumentBlock): JSONObject {
+    return JSONObject().apply {
+      put("id", block.id)
+      put("type", block.type.name)
+      put("text", block.text)
+      put("rawText", block.rawText)
+      put("title", block.title ?: JSONObject.NULL)
+      put("referencePageNumber", block.referencePageNumber ?: JSONObject.NULL)
+      put("fontSizeSp", block.fontSizeSp.toDouble())
+      put("isBold", block.isBold)
+      put("zone", block.zone.name)
+      put("baselineY", block.baselineY.toDouble())
+      put("leftX", block.leftX.toDouble())
+      put("rightX", block.rightX.toDouble())
+      put("lineCount", block.lineCount)
+    }
+  }
+
+  private fun blockFromJson(obj: JSONObject, pageNumber: Int, index: Int): DocumentBlock {
+    val typeName = obj.optString("type", DocumentBlockType.BODY_PARAGRAPH.name)
+    val type = runCatching { DocumentBlockType.valueOf(typeName) }.getOrDefault(DocumentBlockType.BODY_PARAGRAPH)
+    val zoneName = obj.optString("zone", PageZone.MIDDLE.name)
+    val zone = runCatching { PageZone.valueOf(zoneName) }.getOrDefault(PageZone.MIDDLE)
+    val title = obj.optString("title").takeIf { it.isNotBlank() && it != "null" }
+    val refPage = if (obj.has("referencePageNumber") && !obj.isNull("referencePageNumber")) {
+      obj.optInt("referencePageNumber").takeIf { it > 0 }
+    } else {
+      null
+    }
+    val text = obj.optString("text", "")
+    return DocumentBlock(
+      id = obj.optString("id", "p${pageNumber}_b${index}"),
+      type = type,
+      text = text,
+      rawText = obj.optString("rawText", text),
+      title = title,
+      referencePageNumber = refPage,
+      fontSizeSp = obj.optDouble("fontSizeSp", 0.0).toFloat(),
+      isBold = obj.optBoolean("isBold", false),
+      zone = zone,
+      baselineY = obj.optDouble("baselineY", 0.0).toFloat(),
+      leftX = obj.optDouble("leftX", 0.0).toFloat(),
+      rightX = obj.optDouble("rightX", 0.0).toFloat(),
+      lineCount = obj.optInt("lineCount", 1),
+    )
   }
 
   private fun atomicWriteText(target: File, content: String) {

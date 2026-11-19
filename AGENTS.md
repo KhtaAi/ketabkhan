@@ -883,3 +883,49 @@ following permanent standards:
   needing re-extraction (`needsReextraction`), and provide an in-place
   re-extraction action against the locally stored PDF without forcing the user to
   re-pick the document via SAF.
+
+---
+
+## 21. Glyph/Ligature Integrity, Layout Metadata & Structure-Aware Reading Plan Rules
+Per section 0.5, Phase 5 structural and typographic validation established the
+following permanent standards:
+
+### 21.1. Atomic Ligature & Trailing-Glyph Integrity Rule (`لا` Ligature)
+- Primary PDF text extraction MUST process each PDF `TextPosition` as an atomic
+  glyph unit and sort line units strictly by physical horizontal coordinates for
+  RTL lines (while keeping embedded LTR/digit spans ordered ascendingly), rather
+  than delegating multi-character ligature glyphs (`لا`, `\uFEFB`, `\uFEFC`) to
+  Bidi-reversed string buffers that invert `لا` into `ال` (`میلانی` → `میالنی`).
+- Post-extraction restoration MUST NEVER perform blind global `"ال" -> "لا"`
+  replacements; legitimate Arabic/Persian `ال` tokens (`الله`, `الف`, `الان`,
+  `الم`, `سالم`, `تالیف`) MUST remain protected unless explicit glyph-inversion
+  metadata or an unambiguous dictionary match applies.
+- Detached single trailing Persian letters (`پسر`, `دین`, `تحرک`) caused by
+  kerning splits MUST be resolved via horizontal gap measurement against normal
+  word-space thresholds while preserving valid standalone single-letter words
+  (such as `و`).
+
+### 21.2. Line Layout & Typography Metadata Extraction Rule
+- Page extraction MUST capture physical line metadata alongside text, including
+  baseline `Y` coordinate, `minX`/`maxX` bounds, median/max font size (`sp`),
+  bold font descriptor/name detection, line character count, and page zone
+  (`TOP`, `MIDDLE`, `BOTTOM`), enabling downstream structure analysis without
+  re-parsing rendered pages.
+
+### 21.3. Labeled Structural Block Preservation Rule (No Silent Stripping)
+- Extracted pages MUST preserve structural roles as typed `DocumentBlock`s
+  (`PAGE_TITLE`, `SUBTITLE`, `TOC_ENTRY`, `CENTERED_SHORT_LINE`,
+  `BODY_PARAGRAPH`, `FOOTNOTE`, `HEADER`, `FOOTER`, `PAGE_NUMBER`,
+  `REFERENCE_MARK`, `EMPTY`).
+- Repeating headers, footers, page numbers, footnotes, and centered standalone
+  lines (e.g., dedications/poetry) MUST be explicitly tagged and stored in the
+  versioned cache—NEVER silently deleted or flattened into an undifferentiated
+  body stream.
+
+### 21.4. Structure-Aware Reading Plan Contract Rule
+- Before TTS synthesis, a user-selected page range and persistent `ReadingSettings`
+  MUST be compiled deterministically into an ordered `ReadingPlan` of
+  role-tagged `ReadingItem`s (with per-role pause durations such as
+  `SHORT`/`MEDIUM`/`LONG` after titles, TOC announcements such as `فهرست کتاب`
+  with `عنوان، صفحهٔ …`, and explicit `SkippedReadingBlock` records explaining
+  skipped metadata) so the downstream TTS runtime receives structured cues.

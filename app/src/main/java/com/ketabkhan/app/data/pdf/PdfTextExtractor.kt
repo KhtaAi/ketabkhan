@@ -23,6 +23,9 @@ data class ExtractionCandidateScore(
   val guillemetIssueCount: Int,
   val digitAdjacencyCount: Int,
   val corruptedCharCount: Int,
+  val ligatureDefectCount: Int = 0,
+  val zwnjCount: Int = 0,
+  val detachedFinalLetterCount: Int = 0,
   val hasCorruptionSignals: Boolean,
 )
 
@@ -40,6 +43,12 @@ object PersianExtractionScorer {
   private val digitGluedToLetterRegex = Regex(
     "(?:[0-9۰-۹٠-٩][\\u0621-\\u064A\\u066E-\\u06D5]|[\\u0621-\\u064A\\u066E-\\u06D5][0-9۰-۹٠-٩])"
   )
+  private val suspectedInvertedLigatureRegex = Regex(
+    "(?:میالنی|آالشت|االشت|اصالح|انقالب|اخالق|اطالع|اعالم|اقالم|اسالمی|مالحظه|خالصه)"
+  )
+  private val detachedFinalSingleLetterRegex = Regex(
+    "[\\u0621-\\u06D5]{2,}\\s+[بپتثجچحخدذرزژسشصضطظعغفقکگلمنهی](?![\\u0621-\\u06D5\\u200C])"
+  )
 
   fun scoreCandidate(rawText: String): ExtractionCandidateScore {
     if (rawText.isBlank()) {
@@ -52,6 +61,9 @@ object PersianExtractionScorer {
         guillemetIssueCount = 0,
         digitAdjacencyCount = 0,
         corruptedCharCount = 0,
+        ligatureDefectCount = 0,
+        zwnjCount = 0,
+        detachedFinalLetterCount = 0,
         hasCorruptionSignals = false,
       )
     }
@@ -66,9 +78,14 @@ object PersianExtractionScorer {
     var persianLetters = 0
     var totalNonWhitespace = 0
     var corruptedCount = 0
+    var zwnjCount = 0
 
     for (ch in normalized) {
-      if (ch.isWhitespace() || ch == '\u200C') continue
+      if (ch == '\u200C') {
+        zwnjCount++
+        continue
+      }
+      if (ch.isWhitespace()) continue
       totalNonWhitespace++
       val code = ch.code
       val isBad = ch == '\uFFFD' ||
@@ -102,6 +119,8 @@ object PersianExtractionScorer {
 
     val guillemetIssues = countGuillemetIssues(normalized)
     val digitAdjacencyCount = digitGluedToLetterRegex.findAll(normalized).count()
+    val ligatureDefectCount = suspectedInvertedLigatureRegex.findAll(normalized).count()
+    val detachedFinalLetterCount = detachedFinalSingleLetterRegex.findAll(normalized).count()
 
     val wordCount = strippedTokens.size
     val functionDensity = if (wordCount > 0) {
@@ -115,23 +134,33 @@ object PersianExtractionScorer {
     score += persianRatio * 38f
     // 2. Presence of genuine independent Persian function words (0..32 pts)
     score += (functionDensity * 22f) + minOf(functionWordCount, 5) * 2f
-    // 3. Penalty for broken short/shifted prefixes ("م یزد", "نو شآفرین")
+    // 3. Ligature integrity bonus & penalty (intact لا vs inverted ال)
+    if (normalized.contains("لا") || normalized.contains("لآ")) {
+      score += 6f
+    }
+    score -= ligatureDefectCount * 16f
+    // 4. ZWNJ health bonus & broken prefix penalty
+    score += minOf(zwnjCount, 6) * 2.5f
     score -= brokenShortCount * 10f + brokenPatternCount * 14f
-    // 4. Penalty for mismatched or inverted guillemets
+    // 5. Detached final single-letter penalty ("پس ر", "دی ن")
+    score -= detachedFinalLetterCount * 12f
+    // 6. Mismatched or inverted guillemets penalty
     score -= guillemetIssues * 10f
-    // 5. Penalty for digit glued to Persian letter ("۱۲۹۹رضاخان")
+    // 7. Digit glued to Persian letter penalty
     score -= digitAdjacencyCount * 5f
-    // 6. Penalty for replacement/PUA/non-Persian corruption characters
+    // 8. Replacement/PUA/non-Persian corruption penalty
     val corruptedRatio = if (totalNonWhitespace > 0) corruptedCount.toFloat() / totalNonWhitespace.toFloat() else 0f
     score -= corruptedRatio * 80f + corruptedCount * 2f
 
     // Extra bonus when Persian prose has multi-character words and no structural splits
     val avgWordLen = if (wordCount > 0) strippedTokens.sumOf { it.length }.toFloat() / wordCount.toFloat() else 0f
-    if (avgWordLen in 3.2f..7.5f && brokenPrefixTotal == 0) {
+    if (avgWordLen in 3.2f..7.5f && brokenPrefixTotal == 0 && detachedFinalLetterCount == 0) {
       score += 8f
     }
 
     val hasCorruptionSignals = brokenPrefixTotal > 0 ||
+      ligatureDefectCount > 0 ||
+      detachedFinalLetterCount > 0 ||
       guillemetIssues > 0 ||
       digitAdjacencyCount > 0 ||
       corruptedCount > 0 ||
@@ -147,6 +176,9 @@ object PersianExtractionScorer {
       guillemetIssueCount = guillemetIssues,
       digitAdjacencyCount = digitAdjacencyCount,
       corruptedCharCount = corruptedCount,
+      ligatureDefectCount = ligatureDefectCount,
+      zwnjCount = zwnjCount,
+      detachedFinalLetterCount = detachedFinalLetterCount,
       hasCorruptionSignals = hasCorruptionSignals,
     )
   }
@@ -202,6 +234,8 @@ sealed interface ExtractionResult {
     val totalChars: Int,
     val isPasswordProtected: Boolean,
     val qualityReport: BookQualityReport,
+    val ligatureRepairsCount: Int = 0,
+    val detachedFinalRepairsCount: Int = 0,
   ) : ExtractionResult
 
   data object PasswordRequired : ExtractionResult
@@ -385,44 +419,63 @@ class PdfTextExtractor(private val context: Context) {
           fallbackTitle
         }
 
-        // Candidate 1: Position-sorted with tuned kerning tolerance to reduce spurious ZWNJ spaces
-        val sortedStripper = PDFTextStripper().apply {
-          sortByPosition = true
-          spacingTolerance = 0.58f
-          averageCharTolerance = 0.36f
-        }
+        // Candidate 1 (Primary): Line-based RTL-aware stripper keeping ligatures atomic and capturing typography/layout
+        val rtlLineStripper = RtlLinePdfStripper()
 
-        // Candidate 2: Stream-order extractor evaluated only when Candidate 1 shows weak/corrupted score
+        // Fallbacks: Position-sorted & stream-order PDFTextStrippers evaluated only on weak/corrupted RTL candidate
+        var sortedStripper: PDFTextStripper? = null
         var streamStripper: PDFTextStripper? = null
 
-        val selectedRawPages = ArrayList<String>(totalPages)
-        val orderRepairedPages = ArrayList<String>(totalPages)
+        val winningLayouts = ArrayList<ExtractedPageLayout>(totalPages)
 
         for (page in 1..totalPages) {
           coroutineContext.ensureActive()
-          sortedStripper.startPage = page
-          sortedStripper.endPage = page
-          val candidateA = sortedStripper.getText(document) ?: ""
-          val scoreA = PersianExtractionScorer.scoreCandidate(candidateA)
+          val rtlLayout = rtlLineStripper.extractPageLayout(document, page)
+          val rtlScore = PersianExtractionScorer.scoreCandidate(rtlLayout.rawText)
 
-          val chosenRaw = if (PersianExtractionScorer.shouldEvaluateFallback(scoreA, candidateA)) {
+          val chosenLayout = if (PersianExtractionScorer.shouldEvaluateFallback(rtlScore, rtlLayout.rawText)) {
             coroutineContext.ensureActive()
-            val fallbackStripper = streamStripper ?: PDFTextStripper().apply {
+            val posStripper = sortedStripper ?: PDFTextStripper().apply {
+              sortByPosition = true
+              spacingTolerance = 0.58f
+              averageCharTolerance = 0.36f
+            }.also { sortedStripper = it }
+            posStripper.startPage = page
+            posStripper.endPage = page
+            val candidatePos = posStripper.getText(document) ?: ""
+            val scorePos = PersianExtractionScorer.scoreCandidate(candidatePos)
+
+            val stStripper = streamStripper ?: PDFTextStripper().apply {
               sortByPosition = false
               spacingTolerance = 0.55f
               averageCharTolerance = 0.35f
             }.also { streamStripper = it }
-            fallbackStripper.startPage = page
-            fallbackStripper.endPage = page
-            val candidateB = fallbackStripper.getText(document) ?: ""
-            val scoreB = PersianExtractionScorer.scoreCandidate(candidateB)
-            if (scoreB.totalScore > scoreA.totalScore) candidateB else candidateA
+            stStripper.startPage = page
+            stStripper.endPage = page
+            val candidateStream = stStripper.getText(document) ?: ""
+            val scoreStream = PersianExtractionScorer.scoreCandidate(candidateStream)
+
+            val (bestFallbackText, bestFallbackScore) = if (scoreStream.totalScore > scorePos.totalScore) {
+              candidateStream to scoreStream
+            } else {
+              candidatePos to scorePos
+            }
+
+            if (bestFallbackScore.totalScore > rtlScore.totalScore + 2f) {
+              DocumentStructureAnalyzer.buildSyntheticLayoutFromRawText(
+                pageNumber = page,
+                rawText = bestFallbackText,
+                pageWidth = rtlLayout.pageWidth,
+                pageHeight = rtlLayout.pageHeight,
+              )
+            } else {
+              rtlLayout
+            }
           } else {
-            candidateA
+            rtlLayout
           }
 
-          selectedRawPages.add(chosenRaw)
-          orderRepairedPages.add(PersianReadingOrderRepairer.repairPage(chosenRaw))
+          winningLayouts.add(chosenLayout)
 
           onProgress(
             ExtractionProgress(
@@ -433,15 +486,18 @@ class PdfTextExtractor(private val context: Context) {
           )
         }
 
-        val cleanedPages = PersianTextCleaner.cleanBookPages(orderRepairedPages)
-        val extractedPages = cleanedPages.mapIndexed { index, cleaned ->
-          val rawText = selectedRawPages.getOrElse(index) { "" }.trim()
+        val analyzedPages = DocumentStructureAnalyzer.analyzeBook(winningLayouts)
+        val extractedPages = analyzedPages.mapIndexed { index, analyzed ->
+          val rawText = winningLayouts.getOrElse(index) {
+            ExtractedPageLayout(analyzed.pageNumber, emptyList(), "", 595f, 842f)
+          }.rawText.trim()
           ExtractedPage(
-            pageNumber = cleaned.pageNumber,
-            cleanedText = cleaned.cleanedText,
-            isEmpty = cleaned.isEmpty,
-            charCount = cleaned.cleanedText.length,
+            pageNumber = analyzed.pageNumber,
+            cleanedText = analyzed.flatCleanedText,
+            isEmpty = analyzed.isEmpty,
+            charCount = analyzed.flatCleanedText.length,
             rawText = rawText,
+            blocks = analyzed.blocks,
           )
         }
 
@@ -449,6 +505,8 @@ class PdfTextExtractor(private val context: Context) {
         val nonEmptyCount = extractedPages.size - emptyCount
         val totalChars = extractedPages.sumOf { it.charCount }
         val qualityReport = analyzeBookQuality(extractedPages)
+        val totalLigatureRepairs = analyzedPages.sumOf { it.ligatureFixesCount }
+        val totalDetachedRepairs = analyzedPages.sumOf { it.detachedLetterFixesCount }
 
         ExtractionResult.Success(
           resolvedTitle = resolvedTitle,
@@ -458,6 +516,8 @@ class PdfTextExtractor(private val context: Context) {
           totalChars = totalChars,
           isPasswordProtected = password != null || document.isEncrypted,
           qualityReport = qualityReport,
+          ligatureRepairsCount = totalLigatureRepairs,
+          detachedFinalRepairsCount = totalDetachedRepairs,
         )
       }
     } catch (_: InvalidPasswordException) {

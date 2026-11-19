@@ -8,6 +8,10 @@ import com.ketabkhan.app.data.pdf.BookRepository
 import com.ketabkhan.app.data.pdf.ExtractedPage
 import com.ketabkhan.app.data.pdf.ExtractionProgress
 import com.ketabkhan.app.data.pdf.ImportOutcome
+import com.ketabkhan.app.data.reading.ReadingSettingsRepository
+import com.ketabkhan.app.domain.reading.ReadingPlan
+import com.ketabkhan.app.domain.reading.ReadingPlanBuilder
+import com.ketabkhan.app.domain.reading.ReadingSettings
 import com.ketabkhan.app.domain.text.SentenceSplitter
 import com.ketabkhan.app.domain.tts.TtsAvailability
 import com.ketabkhan.app.domain.tts.TtsEngine
@@ -29,6 +33,11 @@ enum class BookTextSource {
   RAW,
 }
 
+enum class BookDisplayFormat {
+  STRUCTURED,
+  PLAIN,
+}
+
 data class PageRangeSummary(
   val startPage: Int,
   val endPage: Int,
@@ -37,6 +46,7 @@ data class PageRangeSummary(
   val nonEmptyPageCount: Int,
   val sentences: List<String>,
   val previewText: String,
+  val readingPlan: ReadingPlan = ReadingPlan(emptyList(), emptyList(), startPage, endPage),
 )
 
 sealed interface BookUiState {
@@ -46,6 +56,8 @@ sealed interface BookUiState {
     val content: BookContent,
     val viewMode: BookViewMode,
     val textSource: BookTextSource = BookTextSource.CLEANED,
+    val displayFormat: BookDisplayFormat = BookDisplayFormat.STRUCTURED,
+    val readingSettings: ReadingSettings = ReadingSettings(),
     val rangeStart: Int,
     val rangeEnd: Int,
     val rangeSummary: PageRangeSummary,
@@ -61,10 +73,13 @@ class BookViewModel(
   private val bookId: String,
   private val repository: BookRepository,
   private val ttsEngine: TtsEngine = UnavailableTtsEngine(),
+  private val readingSettingsRepository: ReadingSettingsRepository? = null,
 ) : ViewModel() {
 
   private val _uiState = MutableStateFlow<BookUiState>(BookUiState.Loading)
   val uiState: StateFlow<BookUiState> = _uiState.asStateFlow()
+
+  private var inMemorySettings: ReadingSettings = readingSettingsRepository?.settings?.value ?: ReadingSettings()
 
   init {
     loadBook()
@@ -79,15 +94,24 @@ class BookViewModel(
         return@launch
       }
 
+      val activeSettings = readingSettingsRepository?.settings?.value ?: inMemorySettings
       val total = content.pages.size.coerceAtLeast(1)
       val initialEnd = minOf(total, 5)
-      val summary = computeRangeSummary(content.pages, 1, initialEnd, BookTextSource.CLEANED)
+      val summary = computeRangeSummary(
+        pages = content.pages,
+        startPage = 1,
+        endPage = initialEnd,
+        textSource = BookTextSource.CLEANED,
+        readingSettings = activeSettings,
+      )
       val ttsAvailability = ttsEngine.checkAvailability()
 
       _uiState.value = BookUiState.Loaded(
         content = content,
         viewMode = BookViewMode.FULL_PAGES,
         textSource = BookTextSource.CLEANED,
+        displayFormat = BookDisplayFormat.STRUCTURED,
+        readingSettings = activeSettings,
         rangeStart = 1,
         rangeEnd = initialEnd,
         rangeSummary = summary,
@@ -101,6 +125,12 @@ class BookViewModel(
     _uiState.value = current.copy(viewMode = mode)
   }
 
+  fun setDisplayFormat(format: BookDisplayFormat) {
+    val current = _uiState.value as? BookUiState.Loaded ?: return
+    if (current.displayFormat == format) return
+    _uiState.value = current.copy(displayFormat = format)
+  }
+
   fun setTextSource(source: BookTextSource) {
     val current = _uiState.value as? BookUiState.Loaded ?: return
     if (current.textSource == source) return
@@ -110,10 +140,31 @@ class BookViewModel(
         startPage = current.rangeStart,
         endPage = current.rangeEnd,
         textSource = source,
+        readingSettings = current.readingSettings,
       )
       val latest = _uiState.value as? BookUiState.Loaded ?: return@launch
       _uiState.value = latest.copy(
         textSource = source,
+        rangeSummary = summary,
+      )
+    }
+  }
+
+  fun updateReadingSettings(newSettings: ReadingSettings) {
+    inMemorySettings = newSettings
+    readingSettingsRepository?.updateSettings(newSettings)
+    val current = _uiState.value as? BookUiState.Loaded ?: return
+    viewModelScope.launch {
+      val summary = computeRangeSummary(
+        pages = current.content.pages,
+        startPage = current.rangeStart,
+        endPage = current.rangeEnd,
+        textSource = current.textSource,
+        readingSettings = newSettings,
+      )
+      val latest = _uiState.value as? BookUiState.Loaded ?: return@launch
+      _uiState.value = latest.copy(
+        readingSettings = newSettings,
         rangeSummary = summary,
       )
     }
@@ -131,6 +182,7 @@ class BookViewModel(
         startPage = clampedStart,
         endPage = clampedEnd,
         textSource = current.textSource,
+        readingSettings = current.readingSettings,
       )
       val latest = _uiState.value as? BookUiState.Loaded ?: return@launch
       _uiState.value = latest.copy(
@@ -215,6 +267,7 @@ class BookViewModel(
             startPage = clampedStart,
             endPage = clampedEnd,
             textSource = latest.textSource,
+            readingSettings = latest.readingSettings,
           )
           _uiState.value = latest.copy(
             content = refreshed,
@@ -261,8 +314,9 @@ class BookViewModel(
     startPage: Int,
     endPage: Int,
     textSource: BookTextSource = (_uiState.value as? BookUiState.Loaded)?.textSource ?: BookTextSource.CLEANED,
+    readingSettings: ReadingSettings = (_uiState.value as? BookUiState.Loaded)?.readingSettings ?: inMemorySettings,
   ): PageRangeSummary {
-    return computeRangeSummary(pages, startPage, endPage, textSource)
+    return computeRangeSummary(pages, startPage, endPage, textSource, readingSettings)
   }
 
   private suspend fun computeRangeSummary(
@@ -270,17 +324,43 @@ class BookViewModel(
     startPage: Int,
     endPage: Int,
     textSource: BookTextSource,
+    readingSettings: ReadingSettings,
   ): PageRangeSummary = withContext(Dispatchers.Default) {
     val slice = pages.filter { it.pageNumber in startPage..endPage }
     val emptyCount = slice.count { it.isEmpty }
     val nonEmptyPages = slice.filter { !it.isEmpty }
-    val combinedText = nonEmptyPages.joinToString(separator = "\n\n") { page ->
-      when (textSource) {
-        BookTextSource.CLEANED -> page.cleanedText
-        BookTextSource.RAW -> page.rawText.ifBlank { page.cleanedText }
-      }
+    val readingPlan = ReadingPlanBuilder.build(
+      pages = pages,
+      startPage = startPage,
+      endPage = endPage,
+      settings = readingSettings,
+    )
+
+    val rawCombined = nonEmptyPages.joinToString(separator = "\n\n") { page ->
+      page.rawText.ifBlank { page.cleanedText }
     }
-    val sentences = SentenceSplitter.split(combinedText)
+    val cleanedCombined = if (readingPlan.items.isNotEmpty()) {
+      readingPlan.items.joinToString(separator = "\n") { it.spokenText }
+    } else {
+      nonEmptyPages.joinToString(separator = "\n\n") { it.cleanedText }
+    }
+
+    val combinedText = when (textSource) {
+      BookTextSource.CLEANED -> cleanedCombined
+      BookTextSource.RAW -> rawCombined
+    }
+
+    val sentences = when (textSource) {
+      BookTextSource.CLEANED -> {
+        if (readingPlan.items.isNotEmpty()) {
+          readingPlan.items.map { it.spokenText }
+        } else {
+          SentenceSplitter.split(cleanedCombined)
+        }
+      }
+      BookTextSource.RAW -> SentenceSplitter.split(rawCombined)
+    }
+
     val previewLimit = 360
     val preview = if (combinedText.length <= previewLimit) {
       combinedText
@@ -296,6 +376,7 @@ class BookViewModel(
       nonEmptyPageCount = nonEmptyPages.size,
       sentences = sentences,
       previewText = preview,
+      readingPlan = readingPlan,
     )
   }
 
@@ -308,10 +389,11 @@ class BookViewModel(
     private val bookId: String,
     private val repository: BookRepository,
     private val ttsEngine: TtsEngine = UnavailableTtsEngine(),
+    private val readingSettingsRepository: ReadingSettingsRepository? = null,
   ) : ViewModelProvider.Factory {
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
-      return BookViewModel(bookId, repository, ttsEngine) as T
+      return BookViewModel(bookId, repository, ttsEngine, readingSettingsRepository) as T
     }
   }
 }

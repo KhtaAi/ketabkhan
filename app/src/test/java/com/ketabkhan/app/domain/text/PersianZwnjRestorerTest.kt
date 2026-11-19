@@ -22,7 +22,7 @@ class PersianZwnjRestorerTest {
   }
 
   @Test
-  fun `restores glued mi verbs while protecting exception dictionary words`() {
+  fun `restores glued mi verbs and safe plural ha while protecting nouns and exceptions`() {
     assertEquals("می‌گویم که میز در میدان است.", PersianZwnjRestorer.restore("میگویم که میز در میدان است."))
     assertEquals(
       "میل و میهن و میوه و نمک و نماز نباید بشکنند.",
@@ -31,6 +31,18 @@ class PersianZwnjRestorerTest {
     assertEquals(
       "می ناب و نوش جان در نوروز مآل خوبی دارد.",
       PersianZwnjRestorer.restore("می ناب و نوش جان در نوروز مآل خوبی دارد."),
+    )
+    assertEquals(
+      "نویسنده یادداشت‌ها را در دفتر می‌نویسد و می‌خواند.",
+      PersianZwnjRestorer.restore("نویسنده یادداشتها را در دفتر مینویسد و میخواند."),
+    )
+    assertEquals(
+      "میان میدان، میهمانان از میزبانی در میهن و میخ و مینا و میلاد سخن گفتند.",
+      PersianZwnjRestorer.restore("میان میدان، میهمانان از میزبانی در میهن و میخ و مینا و میلاد سخن گفتند."),
+    )
+    assertEquals(
+      "نمونه نمودار نمایش به تنهایی در انتها و تنها ماند.",
+      PersianZwnjRestorer.restore("نمونه نمودار نمایش به تنهایی در انتها و تنها ماند."),
     )
   }
 

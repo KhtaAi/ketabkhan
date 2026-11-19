@@ -12,6 +12,7 @@ import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.core.app.ApplicationProvider
 import com.ketabkhan.app.data.pdf.BookRepository
+import com.ketabkhan.app.data.pdf.CURRENT_EXTRACTION_SCHEMA_VERSION
 import com.ketabkhan.app.data.pdf.ImportOutcome
 import com.ketabkhan.app.ui.theme.KetabkhanTheme
 import java.io.File
