@@ -170,7 +170,6 @@ class RtlLinePdfStripperRobolectricTest {
     val success = result as ExtractionResult.Success
     assertEquals(3, success.pages.size)
 
-    // Page 2 has TOC title & 3 TOC entries + HEADER + FOOTER + PAGE_NUMBER
     val p2Blocks = success.pages[1].blocks
     assertTrue(p2Blocks.any { it.type == DocumentBlockType.TOC_ENTRY && it.referencePageNumber == 18 })
     assertTrue(p2Blocks.any { it.type == DocumentBlockType.TOC_ENTRY && it.referencePageNumber == 44 })

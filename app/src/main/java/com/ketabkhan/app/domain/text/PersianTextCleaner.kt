@@ -63,6 +63,8 @@ object PersianTextCleaner {
     text = detachedRepair.text
     text = fixSpacingAndPunctuation(text)
     text = PersianZwnjRestorer.restore(text)
+    text = PersianWordBoundaryRestorer.restoreWordBoundaries(text)
+    text = fixSpacingAndPunctuation(text)
     text = fixZwnjBoundaries(text)
     return LigatureRepairResult(
       text = text.trim(),
@@ -165,7 +167,8 @@ object PersianTextCleaner {
   }
 
   private fun fixZwnjBoundaries(raw: String): String {
-    var text = spaceAroundZwnjRegex.replace(raw, "\u200C")
+    // Preserve space if space was adjacent to ZWNJ: spaces take precedence over zero-width non-joiner
+    var text = raw.replace(Regex("[ \\t]+\\u200C+|\\u200C+[ \\t]+"), " ")
     text = multipleZwnjRegex.replace(text, "\u200C")
     text = text.replace(Regex("^\\u200C+|\\u200C+$"), "")
     return text
@@ -347,6 +350,7 @@ object PersianTextCleaner {
     text = ligatureResult.text
     text = fixSpacingAndPunctuation(text)
     text = PersianZwnjRestorer.restore(text)
+    text = PersianWordBoundaryRestorer.restoreWordBoundaries(text)
     text = fixSpacingAndPunctuation(text)
     text = fixZwnjBoundaries(text)
     return text.trim()

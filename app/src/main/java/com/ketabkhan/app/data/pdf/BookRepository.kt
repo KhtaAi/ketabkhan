@@ -341,6 +341,7 @@ class BookRepository(
           put("isEmpty", page.isEmpty)
           put("charCount", page.charCount)
           put("blocks", blocksArray)
+          put("spacingMetrics", page.spacingMetrics?.let { metricsToJson(it) } ?: JSONObject.NULL)
         }
       )
     }
@@ -371,6 +372,8 @@ class BookRepository(
           } else {
             emptyList()
           }
+          val metricsObj = obj.optJSONObject("spacingMetrics")
+          val spacingMetrics = metricsObj?.let { metricsFromJson(it) }
           add(
             ExtractedPage(
               pageNumber = pageNumber,
@@ -379,6 +382,7 @@ class BookRepository(
               charCount = obj.getInt("charCount"),
               rawText = obj.optString("rawText", ""),
               blocks = blocks,
+              spacingMetrics = spacingMetrics,
             )
           )
         }
@@ -387,6 +391,30 @@ class BookRepository(
     } catch (_: Throwable) {
       null
     }
+  }
+
+  private fun metricsToJson(metrics: PageSpacingMetrics): JSONObject {
+    return JSONObject().apply {
+      put("referenceSpaceWidthPt", metrics.referenceSpaceWidthPt.toDouble())
+      put("referenceSource", metrics.referenceSource.name)
+      put("medianGapPt", metrics.medianGapPt.toDouble())
+      put("fullSpaceCount", metrics.fullSpaceCount)
+      put("zwnjCount", metrics.zwnjCount)
+      put("gluedJoinCount", metrics.gluedJoinCount)
+    }
+  }
+
+  private fun metricsFromJson(obj: JSONObject): PageSpacingMetrics {
+    val srcName = obj.optString("referenceSource", SpaceReferenceSource.FONT_SIZE_FRACTION.name)
+    val src = runCatching { SpaceReferenceSource.valueOf(srcName) }.getOrDefault(SpaceReferenceSource.FONT_SIZE_FRACTION)
+    return PageSpacingMetrics(
+      referenceSpaceWidthPt = obj.optDouble("referenceSpaceWidthPt", 0.0).toFloat(),
+      referenceSource = src,
+      medianGapPt = obj.optDouble("medianGapPt", 0.0).toFloat(),
+      fullSpaceCount = obj.optInt("fullSpaceCount", 0),
+      zwnjCount = obj.optInt("zwnjCount", 0),
+      gluedJoinCount = obj.optInt("gluedJoinCount", 0),
+    )
   }
 
   private fun blockToJson(block: DocumentBlock): JSONObject {

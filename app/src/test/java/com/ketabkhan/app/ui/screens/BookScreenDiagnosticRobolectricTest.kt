@@ -73,7 +73,7 @@ class BookScreenDiagnosticRobolectricTest {
       )
       val indexFile = File(context.filesDir, "books/library_index.json")
       indexFile.writeText(
-        indexFile.readText(Charsets.UTF_8).replace("\"cacheSchemaVersion\":2", "\"cacheSchemaVersion\":1"),
+        indexFile.readText(Charsets.UTF_8).replace(Regex("\"cacheSchemaVersion\":\\s*\\d+"), "\"cacheSchemaVersion\":1"),
         Charsets.UTF_8,
       )
       repository.loadLibrary()
@@ -125,7 +125,7 @@ class BookScreenDiagnosticRobolectricTest {
     assertTrue(currentState.textSource == BookTextSource.RAW)
     composeTestRule.onNodeWithTag("full_pages_list").performScrollToIndex(0)
     composeTestRule.onNodeWithTag("page_text_1")
-      .assertTextContains("۱۲۹۹رضاخان م یزد", substring = true)
+      .assertTextContains("۱۲۹۹ رضاخان", substring = true)
   }
 
   private fun buildSinglePagePersianPdf(

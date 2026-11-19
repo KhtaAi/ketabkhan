@@ -36,6 +36,7 @@ data class ExtractedPageLayout(
   val rawText: String,
   val pageWidth: Float,
   val pageHeight: Float,
+  val spacingMetrics: PageSpacingMetrics? = null,
 )
 
 /**
@@ -127,21 +128,22 @@ class RtlLinePdfStripper : PDFTextStripper() {
   }
 
   override fun endPage(page: PDPage?) {
-    val lines = assembleLines(
+    val output = assembleLinesWithMetrics(
       units = currentPageUnits,
       pageWidth = currentPageWidth,
       pageHeight = currentPageHeight,
     )
-    val rawText = lines.joinToString("\n") { it.rawText }
+    val rawText = output.lines.joinToString("\n") { it.rawText }
     layoutsByPage[currentPageNo] = ExtractedPageLayout(
       pageNumber = currentPageNo,
-      lines = lines,
+      lines = output.lines,
       rawText = rawText,
       pageWidth = currentPageWidth,
       pageHeight = currentPageHeight,
+      spacingMetrics = output.metrics,
     )
     if (rawText.isNotEmpty()) {
-      output.write(rawText)
+      this.output.write(rawText)
     }
     currentPageUnits.clear()
     super.endPage(page)
@@ -191,12 +193,28 @@ class RtlLinePdfStripper : PDFTextStripper() {
       )
     }
 
+    data class AssembledPageOutput(
+      val lines: List<ExtractedLine>,
+      val metrics: PageSpacingMetrics,
+    )
+
     internal fun assembleLines(
       units: List<GlyphUnit>,
       pageWidth: Float,
       pageHeight: Float,
-    ): List<ExtractedLine> {
-      if (units.isEmpty()) return emptyList()
+    ): List<ExtractedLine> = assembleLinesWithMetrics(units, pageWidth, pageHeight).lines
+
+    internal fun assembleLinesWithMetrics(
+      units: List<GlyphUnit>,
+      pageWidth: Float,
+      pageHeight: Float,
+    ): AssembledPageOutput {
+      if (units.isEmpty()) {
+        return AssembledPageOutput(
+          lines = emptyList(),
+          metrics = PageSpacingMetrics(0f, SpaceReferenceSource.DEFAULT_FALLBACK, 0f, 0, 0, 0),
+        )
+      }
 
       val sortedByY = units.sortedBy { it.y }
       val lineClusters = mutableListOf<MutableList<GlyphUnit>>()
@@ -218,13 +236,52 @@ class RtlLinePdfStripper : PDFTextStripper() {
       }
 
       val sortedClusters = lineClusters.sortedBy { cluster -> medianFloat(cluster.map { it.y }) }
-      return sortedClusters.mapNotNull { cluster ->
+
+      val rawGaps = mutableListOf<Float>()
+      for (cluster in sortedClusters) {
+        val sortedX = cluster.sortedBy { it.x }
+        for (i in 1 until sortedX.size) {
+          val g = sortedX[i].minX - sortedX[i - 1].maxX
+          if (g > 0f) rawGaps.add(g)
+        }
+      }
+
+      val calibratedRef = PdfGapCalibrator.computeReferenceSpaceWidth(
+        fontSpaceWidths = units.map { it.spaceWidth },
+        interUnitGaps = rawGaps,
+        fontSizes = units.map { it.fontSize },
+      )
+
+      var fullSpaceCount = 0
+      var zwnjCount = 0
+      var gluedJoinCount = 0
+
+      val lines = sortedClusters.mapNotNull { cluster ->
         buildExtractedLine(
           cluster = cluster,
           pageWidth = pageWidth,
           pageHeight = pageHeight,
+          pageSpaceRef = calibratedRef,
+          onDecision = { dec ->
+            when (dec) {
+              SeparatorDecision.SPACE -> fullSpaceCount++
+              SeparatorDecision.ZWNJ -> zwnjCount++
+              SeparatorDecision.JOIN -> gluedJoinCount++
+            }
+          },
         )
       }
+
+      val metrics = PageSpacingMetrics(
+        referenceSpaceWidthPt = calibratedRef.spaceWidthPt,
+        referenceSource = calibratedRef.source,
+        medianGapPt = if (rawGaps.isNotEmpty()) medianFloat(rawGaps) else 0f,
+        fullSpaceCount = fullSpaceCount,
+        zwnjCount = zwnjCount,
+        gluedJoinCount = gluedJoinCount,
+      )
+
+      return AssembledPageOutput(lines, metrics)
     }
 
     private data class VisualSegment(
@@ -240,6 +297,11 @@ class RtlLinePdfStripper : PDFTextStripper() {
       cluster: List<GlyphUnit>,
       pageWidth: Float,
       pageHeight: Float,
+      pageSpaceRef: PdfGapCalibrator.CalibratedReference = PdfGapCalibrator.CalibratedReference(
+        spaceWidthPt = medianFloat(cluster.map { it.spaceWidth }),
+        source = SpaceReferenceSource.FONT_SPACE_CHAR,
+      ),
+      onDecision: (SeparatorDecision) -> Unit = {},
     ): ExtractedLine? {
       if (cluster.isEmpty()) return null
 
@@ -276,6 +338,8 @@ class RtlLinePdfStripper : PDFTextStripper() {
       val rawLineText = joinSegmentsWithGapInference(
         segments = orderedSegments,
         isRtlDominant = isRtlDominant,
+        pageSpaceRef = pageSpaceRef,
+        onDecision = onDecision,
       ).trim()
 
       if (rawLineText.isEmpty()) return null
@@ -384,6 +448,8 @@ class RtlLinePdfStripper : PDFTextStripper() {
     private fun joinSegmentsWithGapInference(
       segments: List<VisualSegment>,
       isRtlDominant: Boolean,
+      pageSpaceRef: PdfGapCalibrator.CalibratedReference,
+      onDecision: (SeparatorDecision) -> Unit = {},
     ): String {
       if (segments.isEmpty()) return ""
       val sb = StringBuilder()
@@ -396,40 +462,16 @@ class RtlLinePdfStripper : PDFTextStripper() {
         }
 
         val prev = segments[i - 1]
-        if (curr.text == ZWNJ.toString()) {
-          if (sb.isNotEmpty() && sb.last() != ZWNJ && sb.last() != ' ') {
-            sb.append(ZWNJ)
-          }
-          continue
-        }
-        if (prev.text == ZWNJ.toString()) {
-          sb.append(curr.text)
-          continue
-        }
-
         val visualGap = if (isRtlDominant) {
-          prev.minX - curr.maxX
+          PdfGapCalibrator.calculateRtlHorizontalGap(prev.minX, curr.maxX)
         } else {
-          curr.minX - prev.maxX
+          PdfGapCalibrator.calculateLtrHorizontalGap(prev.maxX, curr.minX)
         }
 
         val avgFont = ((prev.fontSize + curr.fontSize) / 2f).coerceAtLeast(1f)
-        val rawSpaceMedian = ((prev.spaceWidth + curr.spaceWidth) / 2f)
-        val effectiveSpaceRef = if (rawSpaceMedian in (avgFont * 0.18f)..(avgFont * 0.65f)) {
-          rawSpaceMedian
-        } else {
-          avgFont * 0.28f
-        }
+        val prevEndsWithLetter = prev.text.lastOrNull()?.let { PdfGapCalibrator.isPersianLetter(it) } == true
+        val currStartsWithLetter = curr.text.firstOrNull()?.let { PdfGapCalibrator.isPersianLetter(it) } == true
 
-        val tightKerningLimit = minOf(effectiveSpaceRef * 0.44f, avgFont * 0.135f)
-        val wordSpaceLimit = maxOf(effectiveSpaceRef * 0.68f, avgFont * 0.20f)
-
-        val prevEndsWithLetter = prev.text.lastOrNull()?.let { isPersianOrArabicLetter(it) } == true
-        val currStartsWithLetter = curr.text.firstOrNull()?.let { isPersianOrArabicLetter(it) } == true
-        val currIsStandalonePunct = curr.text.length == 1 && !curr.text[0].isLetterOrDigit() && curr.text[0] != ZWNJ
-        val prevIsStandaloneOpenQuote = prev.text.lastOrNull() in setOf('«', '(', '[')
-
-        // Check if curr is a single trailing Persian letter at a word boundary (protect "پسر", "دین")
         val nextGap = if (i + 1 < segments.size) {
           val nextSeg = segments[i + 1]
           if (isRtlDominant) curr.minX - nextSeg.maxX else nextSeg.minX - curr.maxX
@@ -440,22 +482,20 @@ class RtlLinePdfStripper : PDFTextStripper() {
           currStartsWithLetter &&
           curr.text != "و" &&
           prevEndsWithLetter &&
-          nextGap >= wordSpaceLimit
+          nextGap >= pageSpaceRef.spaceWidthPt * 0.55f
 
-        val separator = when {
-          prevIsStandaloneOpenQuote -> ""
-          currIsStandalonePunct && visualGap < wordSpaceLimit -> ""
-          prev.isLtrSegment != curr.isLtrSegment -> {
-            // Digit-to-letter adjacency: insert space if even a tiny gap or glued
-            if (visualGap >= avgFont * 0.08f) " " else ""
-          }
-          visualGap <= tightKerningLimit -> ""
-          currIsSingleTrailingLetter && visualGap < effectiveSpaceRef * 0.85f -> ""
-          visualGap < wordSpaceLimit && prevEndsWithLetter && currStartsWithLetter -> ZWNJ.toString()
-          else -> " "
-        }
-
-        sb.append(separator).append(curr.text)
+        val boundaryDecision = PdfGapCalibrator.decideSeparator(
+          prevText = prev.text,
+          currText = curr.text,
+          visualGapPt = visualGap,
+          referenceSpaceWidthPt = pageSpaceRef.spaceWidthPt,
+          avgFontSizePt = avgFont,
+          prevIsLtr = prev.isLtrSegment,
+          currIsLtr = curr.isLtrSegment,
+          currIsSingleTrailingLetter = currIsSingleTrailingLetter,
+        )
+        onDecision(boundaryDecision.decision)
+        sb.append(boundaryDecision.decision.separatorText).append(curr.text)
       }
 
       return sb.toString()

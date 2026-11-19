@@ -1,6 +1,6 @@
 package com.ketabkhan.app.data.pdf
 
-const val CURRENT_EXTRACTION_SCHEMA_VERSION = 3
+const val CURRENT_EXTRACTION_SCHEMA_VERSION = 4
 
 enum class PdfQualityStatus {
   OK,
@@ -13,6 +13,22 @@ enum class PageZone {
   MIDDLE,
   BOTTOM,
 }
+
+enum class SpaceReferenceSource(val persianLabel: String) {
+  FONT_SPACE_CHAR("نویسهٔ فاصلهٔ فونت"),
+  DOMINANT_GAP_CLUSTER("خوشهٔ شکاف‌های غالب"),
+  FONT_SIZE_FRACTION("تخمین از اندازهٔ قلم"),
+  DEFAULT_FALLBACK("پیش‌فرض"),
+}
+
+data class PageSpacingMetrics(
+  val referenceSpaceWidthPt: Float = 0f,
+  val referenceSource: SpaceReferenceSource = SpaceReferenceSource.DEFAULT_FALLBACK,
+  val medianGapPt: Float = 0f,
+  val fullSpaceCount: Int = 0,
+  val zwnjCount: Int = 0,
+  val gluedJoinCount: Int = 0,
+)
 
 enum class DocumentBlockType(val persianLabel: String) {
   PAGE_TITLE("تیتر"),
@@ -79,6 +95,7 @@ data class ExtractedPage(
   val charCount: Int,
   val rawText: String = "",
   val blocks: List<DocumentBlock> = emptyList(),
+  val spacingMetrics: PageSpacingMetrics? = null,
 )
 
 data class BookContent(

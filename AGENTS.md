@@ -929,3 +929,29 @@ following permanent standards:
   `SHORT`/`MEDIUM`/`LONG` after titles, TOC announcements such as `فهرست کتاب`
   with `عنوان، صفحهٔ …`, and explicit `SkippedReadingBlock` records explaining
   skipped metadata) so the downstream TTS runtime receives structured cues.
+
+---
+
+## 22. Word Boundary Calibration & Asymmetric Spacing Rule (Phase 6)
+To prevent real spaces between Persian words from collapsing into ZWNJ or disappearing entirely (e.g. «درآنروزگار», «برایاجرایقانونی», «رااجباریمیکرد», «وبسیاری», «بهرغم», «هنوزشناسنامه», «بیستونهرروزه»), the extraction and text cleaning pipeline MUST adhere to the following standards:
+
+### 22.1. Multi-Tier Reference Space Width Calibration
+- Inter-glyph horizontal gap analysis MUST calibrate the reference space width (`spaceWidthPt`) in the following priority order:
+  1. Font space character advance inspection from `TextPosition.widthOfSpace` when sufficient valid glyphs exist.
+  2. Dominant positive gap clustering fallback across the line segments.
+  3. Standard typographic fraction of the median font size (`avgFont * 0.28f`).
+
+### 22.2. Asymmetric Gap Classification (3-Bucket Rule)
+- Inter-segment visual gaps MUST be classified into 3 distinct buckets:
+  1. **Bucket 1 (Tight Kerning):** `gap <= tightKerningLimit` → Strict JOIN (`""`).
+  2. **Bucket 2 (Intermediate Zone):** `tightKerningLimit < gap < fullSpaceThreshold` → ZWNJ (`\u200C`) permitted **ONLY** when an unmistakable Persian morphological affix pattern matches (e.g., prefix `می`/`نمی`, suffixes `ها`/`های`/`تر`/`ترین`, high-frequency compound prefixes like `نوش`/`خوش`/`هم`).
+  3. **Bucket 3 (Full Space):** `gap >= fullSpaceThreshold` → Full Word Space (`" "`).
+- **Conservative Asymmetry Mandate:** In ANY ambiguous or unconfirmed condition within intermediate gaps, the decision MUST strictly default to FULL SPACE (`" "`) — never ZWNJ and never glued.
+
+### 22.3. Lexical Safety Net & Protected Exception List
+- A robust lexical post-processor (`PersianWordBoundaryRestorer`) MUST restore known glued multi-word expressions («درآنروزگار» → «در آن روزگار», «برایاجرایقانونی» → «برای اجرای قانونی», «رااجباریمیکرد» → «را اجباری می‌کرد», «وبسیاری» → «و بسیاری», «بهرغم» → «به رغم», «هنوزشناسنامه» → «هنوز شناسنامه», «بیستونهرروزه» → «بیستون هر روزه»).
+- A comprehensive protected exception list («میدان», «میان», «میوه», «میز», «میزبان», «میل», «میلاد», «میهن», «میخ», «مینا», «نمک», «نماز», «نمونه», «نمودار», «نمایش», «تنها», «انتها», «اشتها», «بها», «رها», «گواه», «شاه», «آشیانه», «شناسنامه», «بهار» etc.) MUST NEVER be split by prefix rules.
+
+### 22.4. Scorer Penalty & Cache Version 4 Upgrade
+- Extraction candidate evaluation (`PersianExtractionScorer`) MUST heavily penalize abnormally long tokens (>16 characters without space), glued function words, and excessive ZWNJ:space ratios, while favoring natural word spacing distributions.
+- Cache schema version MUST be upgraded to `4`, serializing `PageSpacingMetrics` (`referenceSpaceWidthPt`, `referenceSource`, `medianGapPt`, `fullSpaceCount`, `zwnjCount`, `gluedJoinCount`) per page. Outdated v1..v3 caches trigger transparent re-extraction without deleting stored user books.

@@ -1,5 +1,6 @@
 package com.ketabkhan.app.ui.screens
 
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
@@ -14,8 +15,11 @@ import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.AudioFile
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.GraphicEq
 import androidx.compose.material.icons.filled.ImageNotSupported
+import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.Icon
@@ -23,8 +27,13 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
@@ -48,6 +57,7 @@ internal fun PageTextCard(
   textSource: BookTextSource,
   displayFormat: BookDisplayFormat = BookDisplayFormat.STRUCTURED,
 ) {
+  var isSpacingExpanded by rememberSaveable(page.pageNumber) { mutableStateOf(false) }
   val displayedText = when (textSource) {
     BookTextSource.CLEANED -> page.cleanedText
     BookTextSource.RAW -> page.rawText
@@ -159,7 +169,93 @@ internal fun PageTextCard(
           )
         }
       }
+
+      val metrics = page.spacingMetrics
+      if (metrics != null) {
+        Column(
+          modifier = Modifier
+            .fillMaxWidth()
+            .padding(top = 4.dp),
+          verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+          Row(
+            modifier = Modifier
+              .fillMaxWidth()
+              .clip(RoundedCornerShape(8.dp))
+              .clickable { isSpacingExpanded = !isSpacingExpanded }
+              .testTag("page_spacing_toggle_${page.pageNumber}")
+              .padding(vertical = 4.dp, horizontal = 2.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+          ) {
+            Row(
+              verticalAlignment = Alignment.CenterVertically,
+              horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+              Icon(
+                imageVector = Icons.Default.Tune,
+                contentDescription = null,
+                modifier = Modifier.size(16.dp),
+                tint = MaterialTheme.colorScheme.primary,
+              )
+              Text(
+                text = "گزارش فاصله‌گذاری صفحه",
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Medium),
+                color = MaterialTheme.colorScheme.primary,
+              )
+            }
+            Icon(
+              imageVector = if (isSpacingExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+              contentDescription = if (isSpacingExpanded) "بستن گزارش" else "مشاهدهٔ گزارش",
+              modifier = Modifier.size(20.dp),
+              tint = MaterialTheme.colorScheme.primary,
+            )
+          }
+
+          if (isSpacingExpanded) {
+            Surface(
+              shape = RoundedCornerShape(12.dp),
+              color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.55f),
+              modifier = Modifier
+                .fillMaxWidth()
+                .testTag("page_spacing_panel_${page.pageNumber}"),
+            ) {
+              Column(
+                modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+              ) {
+                SpacingMetricRow("عرض مرجع فاصله:", "${PersianDigits.formatFloat(metrics.referenceSpaceWidthPt, 1)} پوینت")
+                SpacingMetricRow("منبع عرض مرجع:", metrics.referenceSource.persianLabel)
+                SpacingMetricRow("میانهٔ شکاف‌های سطر:", "${PersianDigits.formatFloat(metrics.medianGapPt, 1)} پوینت")
+                SpacingMetricRow("تعداد فاصله‌های کامل:", PersianDigits.formatInt(metrics.fullSpaceCount))
+                SpacingMetricRow("تعداد نیم‌فاصله‌ها:", PersianDigits.formatInt(metrics.zwnjCount))
+                SpacingMetricRow("تعداد پیوستگی‌های نانویسه:", PersianDigits.formatInt(metrics.gluedJoinCount))
+              }
+            }
+          }
+        }
+      }
     }
+  }
+}
+
+@Composable
+private fun SpacingMetricRow(label: String, value: String) {
+  Row(
+    modifier = Modifier.fillMaxWidth(),
+    horizontalArrangement = Arrangement.SpaceBetween,
+    verticalAlignment = Alignment.CenterVertically,
+  ) {
+    Text(
+      text = label,
+      style = MaterialTheme.typography.bodySmall,
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    Text(
+      text = value,
+      style = MaterialTheme.typography.bodySmall.copy(fontWeight = FontWeight.Medium),
+      color = MaterialTheme.colorScheme.onSurface,
+    )
   }
 }
 

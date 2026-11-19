@@ -12,6 +12,11 @@ object PersianDigits {
 
   fun formatLong(value: Long): String = toPersianDigits(value.toString())
 
+  fun formatFloat(value: Float, decimals: Int = 1): String {
+    val formatted = String.format(Locale.US, "%.${decimals}f", value).replace('.', '٫')
+    return toPersianDigits(formatted)
+  }
+
   fun toPersianDigits(input: String): String {
     if (input.isEmpty()) return input
     val sb = StringBuilder(input.length)
