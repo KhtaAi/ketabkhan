@@ -291,6 +291,51 @@ class PdfExtractionRobolectricTest {
   }
 
   @Test
+  fun `marks schema v3 and v4 caches as outdated without deleting book and upgrades cleanly to v5 with block language`() = runBlocking {
+    val pdfFile = buildPersianUnicodePdf(
+      target = tempFolder.newFile("v4_upgrade.pdf"),
+      title = "کتاب ارتقا به نسخه پنج",
+      pageTexts = listOf("این صفحه درباره سیستمهای بینالمللی و نقلقول است."),
+    )
+    val repo = BookRepository(context)
+    val meta = (repo.importAndExtractBook(Uri.fromFile(pdfFile)) {} as ImportOutcome.Success).book
+    assertEquals(5, CURRENT_EXTRACTION_SCHEMA_VERSION)
+    assertEquals(5, meta.cacheSchemaVersion)
+
+    for (legacyVersion in listOf(3, 4)) {
+      val currentCache = File(meta.cacheFilePath).readText(Charsets.UTF_8)
+      File(meta.cacheFilePath).writeText(
+        currentCache.replace("\"version\":$CURRENT_EXTRACTION_SCHEMA_VERSION", "\"version\":$legacyVersion"),
+        Charsets.UTF_8,
+      )
+      val indexFile = File(context.filesDir, "books/library_index.json")
+      indexFile.writeText(
+        indexFile.readText(Charsets.UTF_8).replace(
+          Regex("\"cacheSchemaVersion\":\\s*\\d+"),
+          "\"cacheSchemaVersion\":$legacyVersion",
+        ),
+        Charsets.UTF_8,
+      )
+
+      repo.loadLibrary()
+      val legacyBook = repo.books.value.firstOrNull { it.id == meta.id }
+      assertNotNull("Book must remain in library for v$legacyVersion", legacyBook)
+      assertTrue(legacyBook!!.needsReextraction)
+      assertTrue(repo.getBookContent(meta.id)!!.isCacheOutdated)
+
+      val reextract = repo.reextractBook(meta.id)
+      assertTrue(reextract is ImportOutcome.Success)
+      val upgraded = repo.getBookContent(meta.id)!!
+      assertEquals(5, upgraded.meta.cacheSchemaVersion)
+      assertFalse(upgraded.isCacheOutdated)
+      assertTrue(upgraded.pages[0].blocks.all { it.language == BlockLanguage.PERSIAN })
+      assertTrue(upgraded.pages[0].cleanedText.contains("سیستم\u200Cهای"))
+      assertTrue(upgraded.pages[0].cleanedText.contains("بین\u200Cالمللی"))
+      assertTrue(upgraded.pages[0].cleanedText.contains("نقل\u200Cقول"))
+    }
+  }
+
+  @Test
   fun `unavailable tts engine reports clear Persian message`() = runBlocking {
     val engine = UnavailableTtsEngine()
     val state = engine.checkAvailability()

@@ -22,6 +22,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,12 +30,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import com.ketabkhan.app.data.pdf.BlockLanguage
 import com.ketabkhan.app.data.pdf.ExtractedPage
 import com.ketabkhan.app.domain.reading.ReadingSettings
+import com.ketabkhan.app.domain.text.BidiDirectionIsolator
 import com.ketabkhan.app.domain.text.PersianDigits
 import com.ketabkhan.app.ui.components.KetabkhanPrimaryButton
 import com.ketabkhan.app.ui.components.KetabkhanSecondaryButton
@@ -86,8 +92,8 @@ fun RangePickerSheet(
   val isValidRange = startError == null && endError == null && parsedStart != null && parsedEnd != null
 
   var liveSummary by remember { mutableStateOf<PageRangeSummary?>(null) }
-  LaunchedEffect(parsedStart, parsedEnd, isValidRange, textSource, readingSettings) {
-    if (isValidRange && parsedStart != null && parsedEnd != null) {
+  LaunchedEffect(parsedStart, parsedEnd, startError, endError, textSource, readingSettings) {
+    if (startError == null && endError == null && parsedStart != null && parsedEnd != null) {
       liveSummary = onComputePreview(pages, parsedStart, parsedEnd)
     } else {
       liveSummary = null
@@ -205,12 +211,27 @@ fun RangePickerSheet(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
               )
             } else {
-              Text(
-                text = summary.previewText,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.testTag("range_preview_text"),
-              )
+              val previewLang = remember(summary.previewText) {
+                BidiDirectionIsolator.classifyBlockLanguage(summary.previewText)
+              }
+              val isLatinPreview = previewLang == BlockLanguage.LATIN
+              val formattedPreview = remember(summary.previewText, previewLang) {
+                if (isLatinPreview) summary.previewText else BidiDirectionIsolator.formatMultilineForDisplay(summary.previewText)
+              }
+              CompositionLocalProvider(
+                LocalLayoutDirection provides if (isLatinPreview) LayoutDirection.Ltr else LayoutDirection.Rtl
+              ) {
+                Text(
+                  text = formattedPreview,
+                  style = MaterialTheme.typography.bodyMedium.copy(
+                    textDirection = if (isLatinPreview) TextDirection.Ltr else TextDirection.Rtl,
+                  ),
+                  color = MaterialTheme.colorScheme.onSurfaceVariant,
+                  modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("range_preview_text"),
+                )
+              }
             }
           }
         }

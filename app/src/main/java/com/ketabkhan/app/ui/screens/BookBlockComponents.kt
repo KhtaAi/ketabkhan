@@ -11,19 +11,26 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.text
 import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import com.ketabkhan.app.data.pdf.BlockLanguage
 import com.ketabkhan.app.data.pdf.DocumentBlock
 import com.ketabkhan.app.data.pdf.DocumentBlockType
 import com.ketabkhan.app.data.pdf.ExtractedPage
+import com.ketabkhan.app.domain.text.BidiDirectionIsolator
 import com.ketabkhan.app.domain.text.PersianDigits
 
 @Composable
@@ -54,6 +61,33 @@ internal fun StructuredPageBlocksColumn(
 }
 
 @Composable
+internal fun DirectionalBlockText(
+  text: String,
+  language: BlockLanguage,
+  style: TextStyle,
+  color: androidx.compose.ui.graphics.Color,
+  modifier: Modifier = Modifier,
+  textAlign: TextAlign? = null,
+) {
+  val isLatin = language == BlockLanguage.LATIN
+  val displayText = remember(text, language) {
+    BidiDirectionIsolator.formatForDisplay(text, language)
+  }
+  val targetDirection = if (isLatin) LayoutDirection.Ltr else LayoutDirection.Rtl
+  val targetTextDirection = if (isLatin) TextDirection.Ltr else TextDirection.Rtl
+
+  CompositionLocalProvider(LocalLayoutDirection provides targetDirection) {
+    Text(
+      text = displayText,
+      style = style.copy(textDirection = targetTextDirection),
+      color = color,
+      textAlign = textAlign,
+      modifier = modifier,
+    )
+  }
+}
+
+@Composable
 internal fun DocumentBlockItem(
   block: DocumentBlock,
 ) {
@@ -72,10 +106,12 @@ internal fun DocumentBlockItem(
           verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
           BlockRoleBadge(type = block.type)
-          Text(
+          DirectionalBlockText(
             text = block.text,
+            language = block.language,
             style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
             color = MaterialTheme.colorScheme.primary,
+            modifier = Modifier.fillMaxWidth(),
           )
         }
       }
@@ -89,10 +125,12 @@ internal fun DocumentBlockItem(
         verticalArrangement = Arrangement.spacedBy(4.dp),
       ) {
         BlockRoleBadge(type = block.type)
-        Text(
+        DirectionalBlockText(
           text = block.text,
+          language = block.language,
           style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.SemiBold),
           color = MaterialTheme.colorScheme.onSurface,
+          modifier = Modifier.fillMaxWidth(),
         )
       }
     }
@@ -120,8 +158,9 @@ internal fun DocumentBlockItem(
             verticalAlignment = Alignment.CenterVertically,
           ) {
             BlockRoleBadge(type = DocumentBlockType.TOC_ENTRY)
-            Text(
+            DirectionalBlockText(
               text = entryTitle,
+              language = block.language,
               style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.Medium),
               color = MaterialTheme.colorScheme.onSurface,
               modifier = Modifier.weight(1f),
@@ -160,8 +199,9 @@ internal fun DocumentBlockItem(
           verticalArrangement = Arrangement.spacedBy(4.dp),
         ) {
           BlockRoleBadge(type = block.type)
-          Text(
+          DirectionalBlockText(
             text = block.text,
+            language = block.language,
             style = MaterialTheme.typography.bodyLarge.copy(fontWeight = FontWeight.Medium),
             color = MaterialTheme.colorScheme.onSurface,
             textAlign = TextAlign.Center,
@@ -172,8 +212,9 @@ internal fun DocumentBlockItem(
     }
 
     DocumentBlockType.BODY_PARAGRAPH -> {
-      Text(
+      DirectionalBlockText(
         text = block.text,
+        language = block.language,
         style = MaterialTheme.typography.bodyLarge,
         color = MaterialTheme.colorScheme.onSurface,
         modifier = Modifier
@@ -202,8 +243,9 @@ internal fun DocumentBlockItem(
           verticalAlignment = Alignment.Top,
         ) {
           BlockRoleBadge(type = block.type)
-          Text(
+          DirectionalBlockText(
             text = block.text,
+            language = block.language,
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.weight(1f),

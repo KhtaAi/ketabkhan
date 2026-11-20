@@ -11,6 +11,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToNode
 import androidx.test.core.app.ApplicationProvider
+import com.ketabkhan.app.data.pdf.BlockLanguage
 import com.ketabkhan.app.data.pdf.BookRepository
 import com.ketabkhan.app.data.pdf.ImportOutcome
 import com.ketabkhan.app.data.reading.ReadingSettingsRepository
@@ -135,6 +136,76 @@ class BookScreenStructuredRobolectricTest {
     composeTestRule.onNodeWithTag("reading_item_2").assertIsDisplayed().assertTextContains("فهرست کتاب", substring = true)
     composeTestRule.onNodeWithTag("range_preview_list").performScrollToNode(hasTestTag("reading_item_3"))
     composeTestRule.onNodeWithTag("reading_item_3").assertIsDisplayed().assertTextContains("مقدمه، صفحهٔ ۵", substring = true)
+  }
+
+  @Test
+  fun `renders English copyright block with LTR text intact, skips by default, and includes when readLatinBlocks toggled ON`() {
+    val copyrightLine1 = "All rights reserved. No part of this book may be reproduced"
+    val copyrightLine2 = "without permission in writing from the author."
+    val pdfFile = buildMultiLineStructuredPdf(
+      target = tempFolder.newFile("latin_copyright_book.pdf"),
+      title = "کتاب دوزبانه",
+      pages = listOf(
+        listOf(
+          LineSpec(copyrightLine1, y = 700f, fontSize = 11f, rightX = 480f),
+          LineSpec(copyrightLine2, y = 682f, fontSize = 11f, rightX = 360f),
+          LineSpec("مقدمهٔ فارسی کتاب درباره سیستمهای بینالمللی و نقلقول است.", y = 620f, fontSize = 12f, rightX = 500f),
+        ),
+      ),
+    )
+
+    val bookRepo = BookRepository(context)
+    val settingsRepo = ReadingSettingsRepository(context)
+    val bookId = runBlocking {
+      (bookRepo.importAndExtractBook(Uri.fromFile(pdfFile)) {} as ImportOutcome.Success).book.id
+    }
+    val viewModel = BookViewModel(
+      bookId = bookId,
+      repository = bookRepo,
+      readingSettingsRepository = settingsRepo,
+    )
+
+    composeTestRule.setContent {
+      KetabkhanTheme {
+        BookScreen(viewModel = viewModel, onNavigateBack = {})
+      }
+    }
+
+    composeTestRule.waitUntil(timeoutMillis = 5_000) {
+      viewModel.uiState.value is BookUiState.Loaded
+    }
+    ShadowLooper.idleMainLooper()
+    composeTestRule.waitForIdle()
+
+    val loaded = viewModel.uiState.value as BookUiState.Loaded
+    val pageBlocks = loaded.content.pages[0].blocks
+    val latinBlock = pageBlocks.first { it.language == BlockLanguage.LATIN }
+    assertTrue(latinBlock.text.endsWith("from the author."))
+    assertFalse(latinBlock.text.startsWith("."))
+    assertTrue(pageBlocks.any { it.text.contains("سیستم\u200Cهای بین\u200Cالمللی و نقل\u200Cقول") })
+
+    // Verify logical English text ends with period (not flipped to leading period)
+    composeTestRule.onNodeWithTag("block_${latinBlock.id}")
+      .assertIsDisplayed()
+      .assertTextContains("permission in writing from the author.", substring = true)
+
+    // Default reading plan skips LATIN block and lists it under skippedBlocks
+    assertFalse(loaded.readingSettings.readLatinBlocks)
+    assertTrue(loaded.rangeSummary.readingPlan.skippedBlocks.any { it.block.id == latinBlock.id })
+
+    // Toggle "خواندن متن لاتین" ON in ReadingSettingsSheet
+    composeTestRule.onNodeWithTag("reading_settings_button").performClick()
+    composeTestRule.waitForIdle()
+    composeTestRule.onNodeWithTag("switch_read_latin_blocks").assertIsDisplayed().performClick()
+    composeTestRule.onNodeWithTag("save_reading_settings_button").performClick()
+
+    ShadowLooper.idleMainLooper()
+    composeTestRule.waitForIdle()
+
+    val updated = viewModel.uiState.value as BookUiState.Loaded
+    assertTrue(updated.readingSettings.readLatinBlocks)
+    assertTrue(updated.rangeSummary.readingPlan.skippedBlocks.none { it.block.id == latinBlock.id })
+    assertTrue(updated.rangeSummary.readingPlan.items.any { it.spokenText.contains("from the author.") })
   }
 
   private data class LineSpec(

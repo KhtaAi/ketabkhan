@@ -1,5 +1,6 @@
 package com.ketabkhan.app.data.pdf
 
+import com.ketabkhan.app.domain.text.BidiDirectionIsolator
 import com.ketabkhan.app.domain.text.PersianDigits
 import com.ketabkhan.app.domain.text.PersianTextCleaner
 import kotlin.math.abs
@@ -340,6 +341,7 @@ object DocumentStructureAnalyzer {
               type = DocumentBlockType.TOC_ENTRY,
               text = displayText,
               rawText = currentLine.source.rawText,
+              language = BidiDirectionIsolator.classifyBlockLanguage(entryTitle),
               title = entryTitle,
               referencePageNumber = refPage,
               fontSizeSp = currentLine.source.maxFontSize,
@@ -601,6 +603,7 @@ object DocumentStructureAnalyzer {
       type = type,
       text = line.cleanedText,
       rawText = line.source.rawText,
+      language = BidiDirectionIsolator.classifyBlockLanguage(line.cleanedText),
       fontSizeSp = line.source.maxFontSize,
       isBold = line.source.isBold,
       zone = line.source.zone,
@@ -622,6 +625,7 @@ object DocumentStructureAnalyzer {
       type = type,
       text = text,
       rawText = group.joinToString("\n") { it.source.rawText },
+      language = BidiDirectionIsolator.classifyBlockLanguage(text),
       fontSizeSp = medianFloat(group.map { it.source.maxFontSize }),
       isBold = group.any { it.source.isBold },
       zone = group.first().source.zone,

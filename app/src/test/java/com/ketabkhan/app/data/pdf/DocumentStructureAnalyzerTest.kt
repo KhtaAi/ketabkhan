@@ -145,4 +145,40 @@ class DocumentStructureAnalyzerTest {
     assertEquals(1, p3Blocks.count { it.type == DocumentBlockType.FOOTER })
     assertEquals(1, p3Blocks.count { it.type == DocumentBlockType.PAGE_NUMBER })
   }
+
+  @Test
+  fun `tags PERSIAN LATIN and MIXED blocks accurately without mutating logical English copyright text`() {
+    val copyrightLogical = "All rights reserved. No part of this book may be reproduced without permission in writing from the author."
+    val mixedLogical = "در این کتاب درباره سیستم های هوشمند Android و PDF سخن می گوییم."
+    val pages = listOf(
+      page(
+        1,
+        makeLine("All rights reserved. No part of this book may be reproduced without", y = 200f, minX = 60f, maxX = 500f),
+        makeLine("permission in writing from the author.", y = 219f, minX = 60f, maxX = 320f),
+      ),
+      page(
+        2,
+        makeLine(mixedLogical, y = 200f, minX = 60f, maxX = 500f),
+      ),
+      page(
+        3,
+        makeLine("در آن روزگار، ایرانیان هنوز شناسنامه نداشتند.", y = 200f, minX = 60f, maxX = 500f),
+      ),
+    )
+
+    val analyzed = DocumentStructureAnalyzer.analyzeBook(pages)
+    assertEquals(3, analyzed.size)
+
+    val p1Block = analyzed[0].blocks.first { it.type == DocumentBlockType.BODY_PARAGRAPH }
+    assertEquals(BlockLanguage.LATIN, p1Block.language)
+    assertEquals(copyrightLogical, p1Block.text)
+    assertTrue(p1Block.text.endsWith("from the author."))
+    assertFalse(p1Block.text.startsWith("."))
+
+    val p2Block = analyzed[1].blocks.first { it.type == DocumentBlockType.BODY_PARAGRAPH }
+    assertEquals(BlockLanguage.MIXED, p2Block.language)
+
+    val p3Block = analyzed[2].blocks.first { it.type == DocumentBlockType.BODY_PARAGRAPH }
+    assertEquals(BlockLanguage.PERSIAN, p3Block.language)
+  }
 }

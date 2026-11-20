@@ -28,6 +28,7 @@ class ReadingSettingsRepository(context: Context) {
       .putBoolean(KEY_READ_HEADERS_FOOTERS, newSettings.readHeadersAndFooters)
       .putBoolean(KEY_READ_FOOTNOTES, newSettings.readFootnotes)
       .putBoolean(KEY_READ_PAGE_NUMBERS, newSettings.readPageNumbers)
+      .putBoolean(KEY_READ_LATIN_BLOCKS, newSettings.readLatinBlocks)
       .putString(KEY_TITLE_PAUSE, newSettings.titlePauseDuration.name)
       .apply()
     _settings.value = newSettings
@@ -44,6 +45,7 @@ class ReadingSettingsRepository(context: Context) {
       readHeadersAndFooters = prefs.getBoolean(KEY_READ_HEADERS_FOOTERS, false),
       readFootnotes = prefs.getBoolean(KEY_READ_FOOTNOTES, false),
       readPageNumbers = prefs.getBoolean(KEY_READ_PAGE_NUMBERS, false),
+      readLatinBlocks = prefs.getBoolean(KEY_READ_LATIN_BLOCKS, false),
       titlePauseDuration = pauseDuration,
     )
   }
@@ -54,6 +56,7 @@ class ReadingSettingsRepository(context: Context) {
     const val KEY_READ_HEADERS_FOOTERS = "read_headers_and_footers"
     const val KEY_READ_FOOTNOTES = "read_footnotes"
     const val KEY_READ_PAGE_NUMBERS = "read_page_numbers"
+    const val KEY_READ_LATIN_BLOCKS = "read_latin_blocks"
     const val KEY_TITLE_PAUSE = "title_pause_duration"
   }
 }

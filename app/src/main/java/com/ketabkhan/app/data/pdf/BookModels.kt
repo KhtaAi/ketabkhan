@@ -1,6 +1,6 @@
 package com.ketabkhan.app.data.pdf
 
-const val CURRENT_EXTRACTION_SCHEMA_VERSION = 4
+const val CURRENT_EXTRACTION_SCHEMA_VERSION = 5
 
 enum class PdfQualityStatus {
   OK,
@@ -44,11 +44,18 @@ enum class DocumentBlockType(val persianLabel: String) {
   EMPTY("خالی"),
 }
 
+enum class BlockLanguage(val persianLabel: String) {
+  PERSIAN("فارسی"),
+  LATIN("لاتین"),
+  MIXED("مختلط"),
+}
+
 data class DocumentBlock(
   val id: String,
   val type: DocumentBlockType,
   val text: String,
   val rawText: String = text,
+  val language: BlockLanguage = BlockLanguage.PERSIAN,
   val title: String? = null,
   val referencePageNumber: Int? = null,
   val fontSizeSp: Float = 0f,

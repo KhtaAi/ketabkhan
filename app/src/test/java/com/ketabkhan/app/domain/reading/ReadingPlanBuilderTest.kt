@@ -2,6 +2,7 @@ package com.ketabkhan.app.domain.reading
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import com.ketabkhan.app.data.pdf.BlockLanguage
 import com.ketabkhan.app.data.pdf.DocumentBlock
 import com.ketabkhan.app.data.pdf.DocumentBlockType
 import com.ketabkhan.app.data.pdf.ExtractedPage
@@ -168,11 +169,64 @@ class ReadingPlanBuilderTest {
       readHeadersAndFooters = true,
       readFootnotes = true,
       readPageNumbers = true,
+      readLatinBlocks = true,
       titlePauseDuration = TitlePauseDuration.MEDIUM,
     )
     repo1.updateSettings(updated)
 
     val repo2 = ReadingSettingsRepository(context)
     assertEquals(updated, repo2.settings.value)
+  }
+
+  @Test
+  fun `skips LATIN blocks by default while reading MIXED and PERSIAN blocks, and includes LATIN when toggled on`() {
+    val pages = listOf(
+      ExtractedPage(
+        pageNumber = 1,
+        cleanedText = "...",
+        rawText = "...",
+        isEmpty = false,
+        charCount = 120,
+        blocks = listOf(
+          DocumentBlock(
+            id = "p1_latin",
+            type = DocumentBlockType.BODY_PARAGRAPH,
+            text = "All rights reserved. Permission in writing from the author.",
+            language = BlockLanguage.LATIN,
+          ),
+          DocumentBlock(
+            id = "p1_mixed",
+            type = DocumentBlockType.BODY_PARAGRAPH,
+            text = "این فصل درباره مفاهیم PDF و Unicode است.",
+            language = BlockLanguage.MIXED,
+          ),
+          DocumentBlock(
+            id = "p1_persian",
+            type = DocumentBlockType.BODY_PARAGRAPH,
+            text = "متن فارسی خالص ادامه می‌یابد.",
+            language = BlockLanguage.PERSIAN,
+          ),
+        ),
+      )
+    )
+
+    val defaultPlan = ReadingPlanBuilder.build(pages, startPage = 1, endPage = 1, settings = ReadingSettings())
+    assertEquals(2, defaultPlan.items.size)
+    assertTrue(defaultPlan.items.any { it.sourceBlockId.startsWith("p1_mixed") })
+    assertTrue(defaultPlan.items.any { it.sourceBlockId.startsWith("p1_persian") })
+    assertFalse(defaultPlan.items.any { it.sourceBlockId.startsWith("p1_latin") })
+    assertEquals(1, defaultPlan.skippedBlocks.size)
+    assertEquals(BlockLanguage.LATIN, defaultPlan.skippedBlocks[0].block.language)
+    assertTrue(defaultPlan.skippedBlocks[0].reason.contains("لاتین"))
+
+    val latinEnabledPlan = ReadingPlanBuilder.build(
+      pages = pages,
+      startPage = 1,
+      endPage = 1,
+      settings = ReadingSettings(readLatinBlocks = true),
+    )
+    assertEquals(0, latinEnabledPlan.skippedBlocks.size)
+    assertTrue(latinEnabledPlan.items.any { it.sourceBlockId.startsWith("p1_latin") })
+    assertTrue(latinEnabledPlan.items.any { it.spokenText.contains("from the author.") })
   }
 }

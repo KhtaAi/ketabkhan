@@ -2,6 +2,7 @@ package com.ketabkhan.app.data.pdf
 
 import android.content.Context
 import android.net.Uri
+import com.ketabkhan.app.domain.text.BidiDirectionIsolator
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -423,6 +424,7 @@ class BookRepository(
       put("type", block.type.name)
       put("text", block.text)
       put("rawText", block.rawText)
+      put("language", block.language.name)
       put("title", block.title ?: JSONObject.NULL)
       put("referencePageNumber", block.referencePageNumber ?: JSONObject.NULL)
       put("fontSizeSp", block.fontSizeSp.toDouble())
@@ -447,11 +449,18 @@ class BookRepository(
       null
     }
     val text = obj.optString("text", "")
+    val langName = obj.optString("language", "")
+    val language = if (langName.isNotBlank()) {
+      runCatching { BlockLanguage.valueOf(langName) }.getOrElse { BidiDirectionIsolator.classifyBlockLanguage(text) }
+    } else {
+      BidiDirectionIsolator.classifyBlockLanguage(text)
+    }
     return DocumentBlock(
       id = obj.optString("id", "p${pageNumber}_b${index}"),
       type = type,
       text = text,
       rawText = obj.optString("rawText", text),
+      language = language,
       title = title,
       referencePageNumber = refPage,
       fontSizeSp = obj.optDouble("fontSizeSp", 0.0).toFloat(),

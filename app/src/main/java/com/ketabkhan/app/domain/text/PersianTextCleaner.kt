@@ -62,8 +62,8 @@ object PersianTextCleaner {
     val detachedRepair = PersianLigatureRestorer.repairUnmistakableDetachedTrailingChar(text)
     text = detachedRepair.text
     text = fixSpacingAndPunctuation(text)
-    text = PersianZwnjRestorer.restore(text)
     text = PersianWordBoundaryRestorer.restoreWordBoundaries(text)
+    text = PersianZwnjRestorer.restore(text)
     text = fixSpacingAndPunctuation(text)
     text = fixZwnjBoundaries(text)
     return LigatureRepairResult(
@@ -349,8 +349,8 @@ object PersianTextCleaner {
     val ligatureResult = PersianLigatureRestorer.restore(text)
     text = ligatureResult.text
     text = fixSpacingAndPunctuation(text)
-    text = PersianZwnjRestorer.restore(text)
     text = PersianWordBoundaryRestorer.restoreWordBoundaries(text)
+    text = PersianZwnjRestorer.restore(text)
     text = fixSpacingAndPunctuation(text)
     text = fixZwnjBoundaries(text)
     return text.trim()

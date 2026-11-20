@@ -954,4 +954,28 @@ To prevent real spaces between Persian words from collapsing into ZWNJ or disapp
 
 ### 22.4. Scorer Penalty & Cache Version 4 Upgrade
 - Extraction candidate evaluation (`PersianExtractionScorer`) MUST heavily penalize abnormally long tokens (>16 characters without space), glued function words, and excessive ZWNJ:space ratios, while favoring natural word spacing distributions.
-- Cache schema version MUST be upgraded to `4`, serializing `PageSpacingMetrics` (`referenceSpaceWidthPt`, `referenceSource`, `medianGapPt`, `fullSpaceCount`, `zwnjCount`, `gluedJoinCount`) per page. Outdated v1..v3 caches trigger transparent re-extraction without deleting stored user books.
+- Cache schema version MUST be upgraded to `4`, serializing `PageSpacingMetrics` (`referenceSpaceWidthPt`, `referenceSource`, `medianGapPt`, `fullSpaceCount`, `zwnjCount`, `gluedJoinCount`) per page. Outdated v1..v3 caches trigger transparent re-extraction without deleting stored user books.
+
+---
+
+## 23. Intra-Word ZWNJ Integrity, Compound/Number-Word Restoration & Block Script Direction Rules (Phase 7)
+Per section 0.5, Phase 7 intra-word ZWNJ and Bidi display hardening established the following permanent standards:
+
+### 23.1. Uniform Plural & Affix ZWNJ Symmetry Rule
+- Morphological restoration in `PersianZwnjRestorer` MUST apply `ها`/`های`/`هایی` plural ZWNJ uniformly across all valid Persian nouns (never restricting `های`/`ها` to a small hardcoded stem whitelist while only exempting verified protected non-split words such as `بها`, `رها`, `تنها`, `انتها`, `اشتها`, `گواه`, `شاه`, `بهار`, `صدا`, `جدا`, `خدا`, `شما`, `آنها`, `اینها`).
+- Supported intra-word ZWNJ forms MUST cover:
+  - Noun + plural suffixes (`سیستمهای` → `سیستم\u200Cهای`, `نادانستههای` → `نادانسته\u200Cهای`).
+  - Prefix `بین` + noun/adjective (`بینالمللی` → `بین\u200Cالمللی`).
+  - Prefix `به` + known compound second parts (`بهاستثنای` → `به\u200Cاستثنای`, `بهویژه` → `به\u200Cویژه`) while keeping standalone preposition `به` separated by a full space (`به تهران`, `به رغم`).
+  - Indefinite suffix `ای` on `ی`-ending or silent-`ه` stems (`ایرانیای` → `ایرانی\u200Cای`, `خانهای` → `خانه\u200Cای`) while protecting authentic stems (`دریای`, `دنیای`, `رویای`, `جغرافیای`).
+  - Compound connector `و` between known compound parts (`گفتوگو` → `گفت\u200Cوگو`, `رفتوآمد` → `رفت\u200Cوآمد`).
+- Pipeline ordering: `PersianWordBoundaryRestorer` MUST execute before `PersianZwnjRestorer` and MUST preserve ZWNJ in recognized `به\u200C...` compounds so boundary normalization never strips valid intra-word ZWNJs.
+
+### 23.2. Pure Compound Dictionary & Number-Word Splitter Rule
+- `PersianCompoundDictionary` MUST perform exact-token dictionary mapping (never blind substring replacement inside longer stems) for controlled glued Persian compounds (`نقلقول`, `روبهرو`, `گفتوگو`, `رفتوآمد`, `بینالمللی`, `بهاستثنای`, `بهویژه`, `همچنین`, `هیچگاه`, `هیچوقت`, `کتابخانه`, `دانشگاه`, `پژوهشگاه`, `روششناسی`).
+- `PersianNumberWordSplitter` MUST parse glued Persian number-word sequences (`بیستونهروزه` → `بیست\u200Cونه روزه`), joining numeric components with `\u200Cو` and separating a trailing non-number adjective/noun by a full space, while leaving non-number lookalikes (`سیستمهای`, `بیستونهرروزه`, `دولت`) completely untouched.
+
+### 23.3. Block Script Classification, UI-Only Bidi Isolation & Reading Exclusion Rule
+- `DocumentStructureAnalyzer` MUST tag every `DocumentBlock` with `BlockLanguage` (`PERSIAN`, `LATIN`, `MIXED`) by Persian-Arabic vs. Latin letter ratio, persisted in cache schema version `5` (triggering transparent re-extraction for `v1`..`v4` caches without deleting stored books).
+- UI components (`BookBlockComponents`, `BookScreenSections`) MUST render `LATIN` blocks with explicit `LayoutDirection.Ltr` and `TextDirection.Ltr` so trailing English punctuation remains at the right end (`"...from the author."` never `".permission..."`), and apply Unicode Bidi directional isolates (`\u2066` LRI / `\u2069` PDI) ONLY at display time for embedded Latin spans in `PERSIAN`/`MIXED` blocks—NEVER mutating stored logical `block.text`.
+- `ReadingPlanBuilder` MUST skip `BlockLanguage.LATIN` blocks by default with a clear Persian skip reason (without skipping `BlockLanguage.MIXED`), controlled by a persistent `"خواندن متن لاتین"` (`readLatinBlocks`, default `false`) toggle in `ReadingSettings`, `ReadingSettingsRepository`, and `ReadingSettingsSheet`.

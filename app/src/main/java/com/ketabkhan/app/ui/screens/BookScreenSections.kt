@@ -27,21 +27,28 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.platform.LocalLayoutDirection
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextDirection
+import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
+import com.ketabkhan.app.data.pdf.BlockLanguage
 import com.ketabkhan.app.data.pdf.DocumentBlockType
 import com.ketabkhan.app.data.pdf.ExtractedPage
 import com.ketabkhan.app.domain.reading.ReadingItem
 import com.ketabkhan.app.domain.reading.SkippedReadingBlock
+import com.ketabkhan.app.domain.text.BidiDirectionIsolator
 import com.ketabkhan.app.domain.text.PersianDigits
 import com.ketabkhan.app.domain.tts.TtsAvailability
 import com.ketabkhan.app.ui.components.ErrorBanner
@@ -161,12 +168,25 @@ internal fun PageTextCard(
         }
 
         else -> {
-          Text(
-            text = displayedText,
-            style = MaterialTheme.typography.bodyLarge,
-            color = MaterialTheme.colorScheme.onSurface,
-            modifier = Modifier.testTag("page_text_${page.pageNumber}"),
-          )
+          val pageLang = remember(displayedText) { BidiDirectionIsolator.classifyBlockLanguage(displayedText) }
+          val isLatinPage = pageLang == BlockLanguage.LATIN
+          val formattedText = remember(displayedText, pageLang) {
+            if (isLatinPage) displayedText else BidiDirectionIsolator.formatMultilineForDisplay(displayedText)
+          }
+          CompositionLocalProvider(
+            LocalLayoutDirection provides if (isLatinPage) LayoutDirection.Ltr else LayoutDirection.Rtl
+          ) {
+            Text(
+              text = formattedText,
+              style = MaterialTheme.typography.bodyLarge.copy(
+                textDirection = if (isLatinPage) TextDirection.Ltr else TextDirection.Rtl,
+              ),
+              color = MaterialTheme.colorScheme.onSurface,
+              modifier = Modifier
+                .fillMaxWidth()
+                .testTag("page_text_${page.pageNumber}"),
+            )
+          }
         }
       }
 
@@ -325,16 +345,36 @@ internal fun RangePreviewContent(
             style = MaterialTheme.typography.titleSmall,
             color = MaterialTheme.colorScheme.onSurface,
           )
-          Text(
-            text = if (summary.previewText.isBlank()) {
-              "متنی در این بازه یافت نشد."
-            } else {
-              summary.previewText
-            },
-            style = MaterialTheme.typography.bodyMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.testTag("range_preview_body"),
-          )
+          if (summary.previewText.isBlank()) {
+            Text(
+              text = "متنی در این بازه یافت نشد.",
+              style = MaterialTheme.typography.bodyMedium,
+              color = MaterialTheme.colorScheme.onSurfaceVariant,
+              modifier = Modifier.testTag("range_preview_body"),
+            )
+          } else {
+            val previewLang = remember(summary.previewText) {
+              BidiDirectionIsolator.classifyBlockLanguage(summary.previewText)
+            }
+            val isLatinPreview = previewLang == BlockLanguage.LATIN
+            val formattedPreview = remember(summary.previewText, previewLang) {
+              if (isLatinPreview) summary.previewText else BidiDirectionIsolator.formatMultilineForDisplay(summary.previewText)
+            }
+            CompositionLocalProvider(
+              LocalLayoutDirection provides if (isLatinPreview) LayoutDirection.Ltr else LayoutDirection.Rtl
+            ) {
+              Text(
+                text = formattedPreview,
+                style = MaterialTheme.typography.bodyMedium.copy(
+                  textDirection = if (isLatinPreview) TextDirection.Ltr else TextDirection.Rtl,
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier
+                  .fillMaxWidth()
+                  .testTag("range_preview_body"),
+              )
+            }
+          }
         }
       }
     }
@@ -407,8 +447,10 @@ internal fun RangePreviewContent(
                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
               )
             }
-            Text(
+            val sentenceLang = remember(sentence) { BidiDirectionIsolator.classifyBlockLanguage(sentence) }
+            DirectionalBlockText(
               text = sentence,
+              language = sentenceLang,
               style = MaterialTheme.typography.bodyMedium,
               color = MaterialTheme.colorScheme.onSurface,
               modifier = Modifier.weight(1f),
@@ -473,14 +515,16 @@ private fun ReadingPlanItemCard(item: ReadingItem) {
         )
       }
 
-      Text(
+      DirectionalBlockText(
         text = item.spokenText,
+        language = item.language,
         style = if (item.role == DocumentBlockType.PAGE_TITLE) {
           MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold)
         } else {
           MaterialTheme.typography.bodyMedium
         },
         color = MaterialTheme.colorScheme.onSurface,
+        modifier = Modifier.fillMaxWidth(),
       )
     }
   }
@@ -517,10 +561,12 @@ private fun SkippedBlockCard(
           color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
       }
-      Text(
+      DirectionalBlockText(
         text = skipped.block.text,
+        language = skipped.block.language,
         style = MaterialTheme.typography.bodySmall,
         color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.fillMaxWidth(),
       )
     }
   }

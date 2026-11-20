@@ -1,8 +1,10 @@
 package com.ketabkhan.app.domain.reading
 
+import com.ketabkhan.app.data.pdf.BlockLanguage
 import com.ketabkhan.app.data.pdf.DocumentBlock
 import com.ketabkhan.app.data.pdf.DocumentBlockType
 import com.ketabkhan.app.data.pdf.ExtractedPage
+import com.ketabkhan.app.domain.text.BidiDirectionIsolator
 import com.ketabkhan.app.domain.text.PersianDigits
 import com.ketabkhan.app.domain.text.SentenceSplitter
 
@@ -20,6 +22,7 @@ data class ReadingSettings(
   val readHeadersAndFooters: Boolean = false,
   val readFootnotes: Boolean = false,
   val readPageNumbers: Boolean = false,
+  val readLatinBlocks: Boolean = false,
   val titlePauseDuration: TitlePauseDuration = TitlePauseDuration.LONG,
 )
 
@@ -30,6 +33,7 @@ data class ReadingItem(
   val pageNumber: Int,
   val pauseAfterMillis: Long,
   val sourceBlockId: String,
+  val language: BlockLanguage = BlockLanguage.PERSIAN,
 )
 
 data class SkippedReadingBlock(
@@ -86,6 +90,7 @@ object ReadingPlanBuilder {
               id = "legacy_p${page.pageNumber}_b$idx",
               type = DocumentBlockType.BODY_PARAGRAPH,
               text = para,
+              language = BidiDirectionIsolator.classifyBlockLanguage(para),
             )
           }
       } else {
@@ -97,6 +102,33 @@ object ReadingPlanBuilder {
           if (block.type !in setOf(DocumentBlockType.HEADER, DocumentBlockType.FOOTER, DocumentBlockType.PAGE_NUMBER)) {
             inTocSequence = false
           }
+        }
+
+        if (block.type == DocumentBlockType.EMPTY) continue
+
+        val isDisabledStructuralMetadata = when (block.type) {
+          DocumentBlockType.TOC_ENTRY -> !settings.readTocEntries
+          DocumentBlockType.HEADER,
+          DocumentBlockType.FOOTER -> !settings.readHeadersAndFooters
+          DocumentBlockType.PAGE_NUMBER -> !settings.readPageNumbers
+          DocumentBlockType.FOOTNOTE,
+          DocumentBlockType.REFERENCE_MARK -> !settings.readFootnotes
+          else -> false
+        }
+
+        if (!isDisabledStructuralMetadata &&
+          block.language == BlockLanguage.LATIN &&
+          !settings.readLatinBlocks &&
+          block.text.isNotBlank()
+        ) {
+          skipped.add(
+            SkippedReadingBlock(
+              block = block,
+              pageNumber = page.pageNumber,
+              reason = "متن لاتین پیش‌فرض خوانده نمی‌شود",
+            )
+          )
+          continue
         }
 
         when (block.type) {
@@ -113,6 +145,7 @@ object ReadingPlanBuilder {
                   pageNumber = page.pageNumber,
                   pauseAfterMillis = settings.titlePauseDuration.millis,
                   sourceBlockId = block.id,
+                  language = block.language,
                 )
               )
             }
@@ -129,6 +162,7 @@ object ReadingPlanBuilder {
                   pageNumber = page.pageNumber,
                   pauseAfterMillis = maxOf(400L, (settings.titlePauseDuration.millis * 0.75f).toLong()),
                   sourceBlockId = block.id,
+                  language = block.language,
                 )
               )
             }
@@ -153,6 +187,7 @@ object ReadingPlanBuilder {
                     pageNumber = page.pageNumber,
                     pauseAfterMillis = 650L,
                     sourceBlockId = "${block.id}_toc_announce",
+                    language = BlockLanguage.PERSIAN,
                   )
                 )
                 inTocSequence = true
@@ -174,6 +209,7 @@ object ReadingPlanBuilder {
                     pageNumber = page.pageNumber,
                     pauseAfterMillis = TOC_ENTRY_PAUSE_MS,
                     sourceBlockId = block.id,
+                    language = block.language,
                   )
                 )
               }
@@ -191,6 +227,7 @@ object ReadingPlanBuilder {
                   pageNumber = page.pageNumber,
                   pauseAfterMillis = CENTERED_LINE_PAUSE_MS,
                   sourceBlockId = block.id,
+                  language = block.language,
                 )
               )
             }
@@ -207,6 +244,7 @@ object ReadingPlanBuilder {
                   pageNumber = page.pageNumber,
                   pauseAfterMillis = BODY_SENTENCE_PAUSE_MS,
                   sourceBlockId = "${block.id}_s$sIdx",
+                  language = block.language,
                 )
               )
             }
@@ -237,6 +275,7 @@ object ReadingPlanBuilder {
                     pageNumber = page.pageNumber,
                     pauseAfterMillis = METADATA_PAUSE_MS,
                     sourceBlockId = block.id,
+                    language = block.language,
                   )
                 )
               }
@@ -268,6 +307,7 @@ object ReadingPlanBuilder {
                     pageNumber = page.pageNumber,
                     pauseAfterMillis = METADATA_PAUSE_MS,
                     sourceBlockId = block.id,
+                    language = block.language,
                   )
                 )
               }
@@ -294,6 +334,7 @@ object ReadingPlanBuilder {
                     pageNumber = page.pageNumber,
                     pauseAfterMillis = BODY_SENTENCE_PAUSE_MS + 50L,
                     sourceBlockId = "${block.id}_fn$sIdx",
+                    language = block.language,
                   )
                 )
               }
@@ -320,6 +361,7 @@ object ReadingPlanBuilder {
                     pageNumber = page.pageNumber,
                     pauseAfterMillis = 250L,
                     sourceBlockId = block.id,
+                    language = block.language,
                   )
                 )
               }

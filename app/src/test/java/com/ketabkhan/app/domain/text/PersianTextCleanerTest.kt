@@ -76,4 +76,22 @@ class PersianTextCleanerTest {
       cleaned,
     )
   }
+
+  @Test
+  fun `fixes phase 7 intra-word compounds and suffixes while keeping word spacing and ligature regressions clean`() {
+    val deviceSample = "در یک سفر بیستونهروزه روبهرو با سیستمهای بین‌المللی بهاستثنای چند نقلقول ایرانیای بود."
+    val cleanedSample = PersianTextCleaner.cleanInline(deviceSample)
+    assertEquals(
+      "در یک سفر بیست\u200Cونه روزه روبه\u200Cرو با سیستم\u200Cهای بین\u200Cالمللی به\u200Cاستثنای چند نقل\u200Cقول ایرانی\u200Cای بود.",
+      cleanedSample,
+    )
+
+    // Phase 6 sentence regression
+    val spacingRegression = "در آن روزگار، ایرانیان هنوز شناسنامه نداشتند."
+    assertEquals(spacingRegression, PersianTextCleaner.cleanInline(spacingRegression))
+
+    // Phase 5 ligature regression (no corruption when glyph inversion signal is false)
+    val ligatureProse = "میلانی در آلاشت درباره اصلاح و سلام سخن گفت."
+    assertEquals(ligatureProse, PersianTextCleaner.cleanInlineWithMetrics(ligatureProse, hasGlyphInversionSignal = false).text)
+  }
 }

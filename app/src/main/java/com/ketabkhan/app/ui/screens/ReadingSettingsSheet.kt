@@ -114,6 +114,13 @@ fun ReadingSettingsSheet(
             onCheckedChange = { draft = draft.copy(readPageNumbers = it) },
             switchTestTag = "switch_read_page_numbers",
           )
+          ReadingToggleRow(
+            title = "خواندن متن لاتین",
+            subtitle = "شامل بخش‌های تماماً انگلیسی مانند صفحهٔ حق‌نشر",
+            checked = draft.readLatinBlocks,
+            onCheckedChange = { draft = draft.copy(readLatinBlocks = it) },
+            switchTestTag = "switch_read_latin_blocks",
+          )
         }
       }
 

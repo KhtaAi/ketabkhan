@@ -47,6 +47,7 @@ object PersianWordBoundaryRestorer {
     "ولی", "ولیکن", "وحید", "وحشی", "وسعت", "وسیله", "وسایل", "وسوسه", "وعده",
     // دیگر واژگان مستقل
     "بیستون", "اصفهان", "تهران", "شیراز", "ایران", "مشهد", "تبریز",
+    "درباره", "دربارهٔ",
     "نوش", "نوشابه", "نوشیدنی", "نوروز", "نوجوان", "نوزاد", "نوآوری",
   )
 
@@ -73,14 +74,14 @@ object PersianWordBoundaryRestorer {
 
   // Independent words that must be separated from leading function words
   private val gluedLeadingFunctionWordPatterns = listOf(
-    // در + آن / این / باره / عین / مورد / میان / نتیجه
-    Regex("(?<![\\u0621-\\u06D5])در(آن|این|باره|عین|مورد|میان|نتیجه|میان|حال|زمان|واقع|مجموع|برابر|اختیار|دسترس)(?![\\u0621-\\u06D5])") to "در $1",
+    // در + آن / این / عین / مورد / میان / نتیجه (درباره is a single Persian preposition)
+    Regex("(?<![\\u0621-\\u06D5])در(آن|این|عین|مورد|میان|نتیجه|حال|زمان|واقع|مجموع|برابر|اختیار|دسترس)(?![\\u0621-\\u06D5])") to "در $1",
     // برای + اجرای / این / آن / نمونه
     Regex("(?<![\\u0621-\\u06D5])برای(اجرای|اجرا|این|آن|نمونه|همیشه|همین|تحقق|جلوگیری)(?![\\u0621-\\u06D5])") to "برای $1",
     // را + اجباری / این / آن
     Regex("(?<![\\u0621-\\u06D5])را(اجباری|این|آن|برای|به)(?![\\u0621-\\u06D5])") to "را $1",
-    // به + رغم / عنوان / ویژه / طور / نام / سوی / دست / کار / شمار
-    Regex("(?<![\\u0621-\\u06D5])به(رغم|عنوان|ویژه|طور|نام|سوی|دست|کار|شمار|همراه|خاطر|منظور|علت|سبب|جا|شکل)(?![\\u0621-\\u06D5])") to "به $1",
+    // به + رغم / عنوان / طور / نام / سوی / دست / کار / شمار (ویژه uses ZWNJ به‌ویژه)
+    Regex("(?<![\\u0621-\\u06D5])به(رغم|عنوان|طور|نام|سوی|دست|کار|شمار|همراه|خاطر|منظور|علت|سبب|جا|شکل)(?![\\u0621-\\u06D5])") to "به $1",
     // هنوز + شناسنامه / هم / در / به / یک
     Regex("(?<![\\u0621-\\u06D5])هنوز(شناسنامه|هم|در|به|یک|آن|این)(?![\\u0621-\\u06D5])") to "هنوز $1",
     // بیستون + هرروزه
@@ -103,11 +104,18 @@ object PersianWordBoundaryRestorer {
     var result = text
 
     // 1. First normalize misplaced ZWNJ between independent function words and their targets
+    val knownBeZwnjTargets = setOf(
+      "استثنای", "استثنا", "ویژه", "علاوه", "خصوص", "طور", "منظور", "تدریج",
+      "سادگی", "سرعت", "راحتی", "خوبی", "شدت", "تازگی", "ناچار",
+    )
     result = misplacedZwnjBetweenWordsRegex.replace(result) { match ->
       val func = match.groupValues[1]
       val next = match.groupValues[2]
-      // Do not touch valid cases like به+علاوه or به+تدریج if desired, but in general "به" before a full noun is "به <noun>"
-      "$func $next"
+      if (func == "به" && next in knownBeZwnjTargets) {
+        match.value
+      } else {
+        "$func $next"
+      }
     }
     result = zwnjBeforeVavRegex.replace(result, "$1 $2")
 

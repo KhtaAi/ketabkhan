@@ -32,14 +32,40 @@ object PersianZwnjRestorer {
     "نمودار", "نمودارها", "نمودارهای",
     "نمایش", "نمایشی", "نمایشگاه", "نمایشنامه", "نمایان",
     "نمد", "نمدی", "نماد", "نمادین", "نمره", "نمناک", "نمود", "نمودن",
+    // بهار، گواه، شاه، صدا، جدا، خدا، شما، آنها، اینها
+    "تنها", "تنهایی", "تنهای", "انتها", "انتهایی", "انتهای",
+    "اشتها", "اشتهایی", "اشتهای", "منتها", "منتهای",
+    "بها", "بهای", "بهایی", "رها", "رهایی", "رهای",
+    "گواه", "گواهی", "گواهان", "شاه", "شاهان", "شاهنشاه", "شاهین",
+    "بهار", "بهاری", "بهمن", "بهبود", "بهبودی", "بهتر", "بهترین",
+    "بهشت", "بهشتی", "بهداشت", "بهداشتی", "بهروز", "بهزاد", "بهرام", "بهره",
+    "صدا", "صدای", "صدایی", "جدا", "جدای", "جدایی", "خدا", "خدای", "خدایی",
+    "شما", "شمایی", "آنها", "اینها", "آنهای", "اینهای", "آنهایی", "اینهایی",
     // واژگان غیرتفکیک‌پذیر دیگر
     "نوش", "نوشابه", "نوشیدنی", "نوروز", "نوجوان", "نوزاد", "نوآوری",
     "لآلی", "مآل", "مآب", "مآخذ",
   )
 
   private val gluedNonPluralHaExceptions = setOf(
-    "تنها", "تنهایی", "انتها", "انتهایی", "اشتها", "اشتهایی", "منتها",
-    "اژدها", "فقها", "سفها", "بها", "بهایی", "رها", "رهایی", "صدها", "دهها",
+    "تنها", "تنهایی", "تنهای",
+    "انتها", "انتهایی", "انتهای",
+    "اشتها", "اشتهایی", "اشتهای",
+    "منتها", "منتهای",
+    "اژدها", "اژدهای", "اژدهایی",
+    "فقها", "سفها",
+    "بها", "بهایی", "بهای", "بهایم",
+    "رها", "رهایی", "رهای",
+    "صدها", "دهها",
+    "آنها", "اینها", "آنهای", "اینهای", "آنهایی", "اینهایی",
+    "شماها",
+  )
+
+  private val knownTwoLetterPluralNouns = setOf(
+    "شب", "گل", "زن", "دل", "سر", "پا", "جا", "مو", "لب", "کف", "در", "پر", "تب", "غم", "لب",
+  )
+
+  private val nonPluralStemsBeforeHa = setOf(
+    "تن", "انت", "اشت", "منت", "اژد", "فق", "سف", "آن", "این", "شما",
   )
 
   private val knownGluedPluralHaStems = setOf(
@@ -48,6 +74,45 @@ object PersianZwnjRestorer {
     "تغییر", "تحقیق", "تصویر", "ساختار", "بلوک", "دستور", "پاسخ", "پرسش",
     "فهرست", "عنوان", "مورد", "حالت", "روش", "نمودار", "میدان", "میز",
     "دفتر", "سخن", "حرف", "کار", "روز", "شب", "شهر", "قلم", "واژه",
+    "زمین", "نام", "سال", "ماه", "دست", "سیستم", "کشور", "ماشین",
+  )
+
+  private val knownSilentHeIndefiniteStems = setOf(
+    "خانه", "صفحه", "جمله", "کلمه", "برنامه", "مقاله", "مسئله", "مساله",
+    "دوره", "هفته", "مرحله", "تجربه", "رابطه", "پدیده", "مجموعه", "سامانه",
+    "رسانه", "جامعه", "منطقه", "شبکه", "گوشه", "لبه", "پرده", "قطعه",
+    "تکه", "نسخه", "وظیفه", "شماره", "گزینه", "نکته", "حوزه", "عرصه",
+    "گونه", "پروژه", "سازه", "جاده", "قاره", "ستاره", "کوچه", "بچه",
+    "ساده", "تازه", "زنده", "بسته", "خسته", "هسته", "نوشته", "گفته",
+    "دیده", "شنیده", "خوانده", "رفته", "آمده", "مانده", "شده", "کرده",
+    "ساخته", "یافته", "افزوده", "فرستاده", "آورده", "گرفته", "داده", "نهاده",
+    "گذاشته", "نشسته", "افتاده", "ایستاده", "کتابخانه", "روزنامه", "شناسنامه",
+    "آشیانه", "کارخانه", "چاپخانه", "پژوهشکده", "دانشکده", "داروخانه",
+    "اندازه", "سابقه", "لاحقه", "فاصله", "حاشیه", "زاویه", "پایه", "مایه",
+    "سایه", "لایه", "درجه", "لحظه", "نقطه", "عرشه", "قله", "ریشه", "شاخه",
+    "تپه", "دره", "چشمه", "پنجره", "تخته", "حلقه", "سکه", "برگه", "ورقه",
+    "شیشه", "کیسه", "جعبه", "کاسه", "پله", "لهجه", "بهانه", "ترانه", "افسانه",
+    "نشانه", "زبانه", "دهانه", "رایانه", "نشریه", "نظریه", "فرضیه", "قضیه",
+    "هدیه", "توصیه", "جریمه", "غریزه", "انگیزه", "عقیده", "اندیشه", "پیشینه",
+    "ماده", "ایده", "قاعده", "آینده", "گذشته", "پرنده", "خواننده", "نویسنده",
+    "نماینده", "گوینده", "سازنده", "گیرنده", "دهنده", "بیننده", "دارنده",
+    "نادانسته", "دانسته", "شایسته", "وابسته", "پیوسته",
+  )
+
+  private val protectedYaiEzafeWords = setOf(
+    "دریای", "دنیای", "رویای", "رؤیای", "احیای", "آسیای", "کیمیای",
+    "جغرافیای", "گویای", "پویای", "جویای", "اشیای", "اولیای", "انبیای",
+    "اصفیای", "اشقیای", "سوفیای", "مافیای", "مدیای", "مومیای", "سوریای",
+    "ایتالیای", "اسپانیای", "آلمانیای", "بریتانیای", "استرالیای", "کلمبیای",
+    "اتوپیای", "یوتوپیای", "فوبیای", "بیای", "نیای", "پریای", "ثریای", "علیای", "محیای",
+    "مزایای", "هدایای", "قضایای", "بقایای", "زوایای", "بلایای", "نوایای", "سجایای",
+  )
+
+  private val knownSilentHePastParticiples = setOf(
+    "نوشته", "خوانده", "دیده", "گفته", "شنیده", "رفته", "آمده", "مانده",
+    "شده", "کرده", "گرفته", "داده", "آورده", "برده", "خورده", "گذاشته",
+    "نشسته", "ساخته", "یافته", "توانسته", "دانسته", "خواسته", "پنداشته",
+    "گشته", "ایستاده", "افتاده", "فرستاده", "نهاده", "افزوده", "پوشیده",
   )
 
   private val nonVerbWordsAfterMi = setOf(
@@ -105,6 +170,47 @@ object PersianZwnjRestorer {
     "آهنگ", "آباد", "آبادی", "آزما", "آزمایی", "آورد", "آورده",
   )
 
+  private val knownBeynSecondParts = setOf(
+    "رشته‌ای", "رشتهای", "شهری", "فردی", "فرهنگی", "گروهی", "متنی", "نسلی",
+    "دولتی", "بانکی", "دانشگاهی", "قاره‌ای", "قارهای", "سیاره‌ای", "سیارهای",
+    "کهکشانی", "واژه‌ای", "واژهای", "سطری", "مللی",
+  )
+
+  private val knownBeCompoundSecondParts = setOf(
+    "استثنای", "استثنا", "ویژه", "علاوه", "خصوص", "طور", "منظور", "تدریج",
+    "سادگی", "سرعت", "راحتی", "خوبی", "شدت", "تازگی", "ناچار",
+    "مراتب", "ندرت", "وفور", "سختی", "آسانی", "درستی", "موقع", "تندی", "احتمال",
+  )
+
+  private val compoundVavPairs: Map<String, Pair<String, String>> = listOf(
+    "گفت" to "گو",
+    "رفت" to "آمد",
+    "جست" to "جو",
+    "شست" to "شو",
+    "پخت" to "پز",
+    "خرید" to "فروش",
+    "زد" to "بند",
+    "زد" to "خورد",
+    "کم" to "بیش",
+    "زیر" to "رو",
+    "کم" to "زیاد",
+    "سرد" to "گرم",
+    "تلخ" to "شیرین",
+    "شب" to "روز",
+    "تک" to "توک",
+    "بگو" to "مگو",
+    "برو" to "بیا",
+    "دار" to "ندار",
+    "سوز" to "گداز",
+    "تاب" to "توان",
+    "جمع" to "جور",
+    "ریز" to "درشت",
+    "چپ" to "راست",
+    "بالا" to "پایین",
+    "دور" to "بر",
+    "پشت" to "رو",
+  ).associate { (left, right) -> "${left}و$right" to (left to right) }
+
   private val consonantHeNonSilentEndings = listOf("اه", "وه")
   private val consonantHeExceptions = setOf("توجیه", "شبیه", "وجیه", "فقیه", "نزیه", "مکروه", "انبوه")
 
@@ -141,34 +247,67 @@ object PersianZwnjRestorer {
     "(?<![\\u0621-\\u06D5\\u200C])(ن?می)([\\u0621-\\u06D5]{2,})(?![\\u0621-\\u06D5])"
   )
 
-  // 4. Plural & superlative suffixes separated by space
+  // 4. Prefix بین + ال... or known compound second parts
+  private val spacedBeynAlRegex = Regex(
+    "(?<![\\u0621-\\u06D5\\u200C])بین\\s+(ال[\\u0621-\\u06D5]{2,})"
+  )
+  private val gluedBeynAlRegex = Regex(
+    "(?<![\\u0621-\\u06D5\\u200C])بین(ال[\\u0621-\\u06D5]{2,})(?![\\u0621-\\u06D5])"
+  )
+  private val gluedBeynCompoundRegex = Regex(
+    "(?<![\\u0621-\\u06D5\\u200C])بین([\\u0621-\\u06D5]{3,})(?![\\u0621-\\u06D5])"
+  )
+
+  // 5. Prefix به + known compound second parts (never touches standalone "به <noun>")
+  private val gluedBeCompoundRegex = Regex(
+    "(?<![\\u0621-\\u06D5\\u200C])به([\\u0621-\\u06D5]{3,})(?![\\u0621-\\u06D5])"
+  )
+
+  // 6. Plural & superlative suffixes separated by space
   private val spacedSuffixRegex = Regex(
     "([\\u0621-\\u06D5]{2,})\\s+(هایشان|هایتان|هایمان|هایی|هایش|هایت|هایم|های|ها|ترین)(?![\\u0621-\\u06D5])"
   )
 
-  // Comparative "تر" after silent ه or adjectives of length >= 3
+  // Comparative "تر" after silent ه
   private val spacedTarSuffixRegex = Regex(
     "([\\u0621-\\u06D5]{2,}ه)\\s+(تر)(?![\\u0621-\\u06D5])"
   )
 
-  // Glued silent ه + ها/های/هایی without ZWNJ (e.g., "خانهها" -> "خانه\u200Cها")
+  // Glued silent ه + ها/های/هایی without ZWNJ (e.g., "نادانستههای" -> "نادانسته\u200Cهای")
   private val gluedSilentHePluralRegex = Regex(
     "([\\u0621-\\u06D5]{2,}ه)(هایشان|هایتان|هایمان|هایی|هایش|هایت|هایم|های|ها)(?![\\u0621-\\u06D5])"
   )
 
-  // Glued high-confidence consonant-ending noun + ها/های/هایی (e.g., "یادداشتها" -> "یادداشت\u200Cها")
-  private val gluedSafeNounPluralRegex = Regex(
-    "(?<![\\u0621-\\u06D5\\u200C])([\\u0621-\\u06D5]{3,})(هایشان|هایتان|هایمان|هایی|هایش|هایت|هایم|های|ها)(?![\\u0621-\\u06D5])"
+  // Glued silent ه + اند/ام/ای/ایم/اید (e.g., "نوشتهاند" -> "نوشته\u200Cاند", "خانهای" -> "خانه\u200Cای")
+  private val gluedSilentHeAndRegex = Regex(
+    "(?<![\\u0621-\\u06D5\\u200C])([\\u0621-\\u06D5]{2,}ه)(اند)(?![\\u0621-\\u06D5])"
+  )
+  private val gluedSilentHeEncliticRegex = Regex(
+    "(?<![\\u0621-\\u06D5\\u200C])([\\u0621-\\u06D5]{2,}ه)(ام|ای|ایم|اید)(?![\\u0621-\\u06D5])"
   )
 
-  // 5. Ezafe "ه ی" or "ه\u200Cی" -> "هٔ"
+  // Glued stem ending in ی + ای (e.g., "ایرانیای" -> "ایرانی\u200Cای")
+  private val gluedYaiIndefiniteRegex = Regex(
+    "(?<![\\u0621-\\u06D5\\u200C])([\\u0621-\\u06D5]{3,}ی)ای(?![\\u0621-\\u06D5])"
+  )
+
+  // Glued noun + ها/های/هایی (unified across ALL Persian nouns, e.g., "سیستمهای" -> "سیستم\u200Cهای")
+  private val gluedSafeNounPluralRegex = Regex(
+    "(?<![\\u0621-\\u06D5\\u200C])([\\u0621-\\u06D5]{2,})(هایشان|هایتان|هایمان|هایی|هایش|هایت|هایم|های|ها)(?![\\u0621-\\u06D5])"
+  )
+
+  // 7. Ezafe "ه ی" or "ه\u200Cی" -> "هٔ"
   private val silentHeEzafeRegex = Regex(
     "([\\u0621-\\u06D5]{2,}ه)(?:\\s+|\\u200C)ی(?![\\u0621-\\u06D5])"
   )
 
-  // 6. Enclitic pronouns / copula after silent ه (e.g., "رفته ام" -> "رفته‌ام")
+  // 8. Spaced enclitic pronouns / copula after silent ه (e.g., "رفته ام" -> "رفته‌ام", "خانه ای" -> "خانه‌ای")
   private val silentHeEncliticRegex = Regex(
     "([\\u0621-\\u06D5]{2,}ه)\\s+(ام|ای|اش|ات|ایم|اید|اند)(?![\\u0621-\\u06D5])"
+  )
+
+  private val persianTokenRegex = Regex(
+    "(?<![\\u0621-\\u06D5\\u200C])[\\u0621-\\u06D5]+(?![\\u0621-\\u06D5\\u200C])"
   )
 
   fun restore(text: String): String {
@@ -244,7 +383,43 @@ object PersianZwnjRestorer {
       }
     }
 
-    // Step 4: Suffixes ها، های، هایی، ترین، تر
+    // Step 4: Decompose glued Persian letter-written numbers (e.g., "بیستونهروزه" -> "بیست‌ونه روزه")
+    result = PersianNumberWordSplitter.splitInText(result)
+
+    // Step 5: Exact glued compound dictionary + و-joined compounds ("نقلقول", "روبهرو", "گفتوگو", "رفتوآمد", ...)
+    result = PersianCompoundDictionary.restoreInText(result)
+    result = persianTokenRegex.replace(result) { match ->
+      val tok = match.value
+      val pair = compoundVavPairs[tok]
+      if (pair != null) {
+        "${pair.first}${ZWNJ}و${pair.second}"
+      } else {
+        tok
+      }
+    }
+
+    // Step 6: Prefix بین + word ("بینالمللی" -> "بین‌المللی") & known به + compound ("بهاستثنای" -> "به‌استثنای")
+    result = spacedBeynAlRegex.replace(result) { match ->
+      "بین$ZWNJ${match.groupValues[1]}"
+    }
+    result = gluedBeynAlRegex.replace(result) { match ->
+      "بین$ZWNJ${match.groupValues[1]}"
+    }
+    result = gluedBeynCompoundRegex.replace(result) { match ->
+      val tail = match.groupValues[1]
+      if (tail in knownBeynSecondParts) "بین$ZWNJ$tail" else match.value
+    }
+    result = gluedBeCompoundRegex.replace(result) { match ->
+      val full = match.value
+      val tail = match.groupValues[1]
+      if (full !in protectedNonSplitWords && tail in knownBeCompoundSecondParts) {
+        "به$ZWNJ$tail"
+      } else {
+        full
+      }
+    }
+
+    // Step 7: Spaced suffixes ها، های، هایی، ترین، تر
     result = spacedSuffixRegex.replace(result) { match ->
       val base = match.groupValues[1]
       val suffix = match.groupValues[2]
@@ -261,12 +436,46 @@ object PersianZwnjRestorer {
       if (isSilentHeWord(base)) "$base$ZWNJ$suffix" else match.value
     }
 
+    // Step 8: Glued silent-ه plural ("نادانستههای") & enclitic/indefinite ("نوشتهاند", "خانهای")
     result = gluedSilentHePluralRegex.replace(result) { match ->
       val base = match.groupValues[1]
       val suffix = match.groupValues[2]
       if (isSilentHeWord(base) && match.value !in gluedNonPluralHaExceptions) "$base$ZWNJ$suffix" else match.value
     }
 
+    result = gluedSilentHeAndRegex.replace(result) { match ->
+      val base = match.groupValues[1]
+      val suffix = match.groupValues[2]
+      if (isSilentHeWord(base)) "$base$ZWNJ$suffix" else match.value
+    }
+
+    result = gluedSilentHeEncliticRegex.replace(result) { match ->
+      val fullWord = match.value
+      val base = match.groupValues[1]
+      val enclitic = match.groupValues[2]
+      if (fullWord in gluedNonPluralHaExceptions || fullWord in protectedNonSplitWords) {
+        fullWord
+      } else if (enclitic == "ای" && isSilentHeIndefiniteCandidate(base)) {
+        "$base$ZWNJ$enclitic"
+      } else if (enclitic != "ای" && base in knownSilentHePastParticiples) {
+        "$base$ZWNJ$enclitic"
+      } else {
+        fullWord
+      }
+    }
+
+    // Step 9: Glued ی + ای indefinite ("ایرانیای" -> "ایرانی‌ای")
+    result = gluedYaiIndefiniteRegex.replace(result) { match ->
+      val fullWord = match.value
+      val base = match.groupValues[1]
+      if (base.endsWith("ای") || fullWord in protectedYaiEzafeWords || fullWord in protectedNonSplitWords) {
+        fullWord
+      } else {
+        "$base${ZWNJ}ای"
+      }
+    }
+
+    // Step 10: Unified glued noun plural ("سیستمهای" -> "سیستم‌های", "کتابها" -> "کتاب‌ها")
     result = gluedSafeNounPluralRegex.replace(result) { match ->
       val fullWord = match.value
       val base = match.groupValues[1]
@@ -278,41 +487,43 @@ object PersianZwnjRestorer {
       }
     }
 
-    // Step 5: Ezafe هٔ ("صفحه ی" -> "صفحهٔ")
+    // Step 11: Ezafe هٔ ("صفحه ی" -> "صفحهٔ") & spaced silent-ه enclitics ("رفته ام" -> "رفته‌ام")
     result = silentHeEzafeRegex.replace(result) { match ->
       val base = match.groupValues[1]
       if (isSilentHeWord(base)) "${base}ٔ" else match.value
     }
 
-    // Step 6: Enclitics after silent ه ("رفته ام" -> "رفته‌ام")
     result = silentHeEncliticRegex.replace(result) { match ->
       val base = match.groupValues[1]
       val enclitic = match.groupValues[2]
       if (isSilentHeWord(base)) "$base$ZWNJ$enclitic" else match.value
     }
 
+    // Re-apply exact compound dictionary on newly isolated base tokens (e.g. "دانشگاه‌" inside "دانشگاه‌های")
+    result = PersianCompoundDictionary.restoreInText(result)
+
     // Cleanup any accidental duplicate ZWNJ
     return result.replace(Regex("$ZWNJ{2,}"), "$ZWNJ")
   }
 
   private fun isSafeGluedPluralNoun(fullWord: String, base: String, suffix: String): Boolean {
-    if (fullWord in gluedNonPluralHaExceptions || base in functionWordsNoSuffix) return false
+    if (fullWord in gluedNonPluralHaExceptions || fullWord in protectedNonSplitWords) return false
+    if (base in functionWordsNoSuffix || base in nonPluralStemsBeforeHa) return false
     if (base.endsWith('ه')) return false // handled exclusively by silent-ه rule above
     if (base in knownGluedPluralHaStems) return true
-    if (
-      base.endsWith("داشت") ||
-      base.endsWith("نگاشت") ||
-      base.endsWith("برداشت") ||
-      base.endsWith("گاه") ||
-      base.endsWith("ستان") ||
-      base.endsWith("دانش") ||
-      base.endsWith("گزارش")
-    ) {
+    if (base.length >= 3) return true
+    return base in knownTwoLetterPluralNouns
+  }
+
+  private fun isSilentHeIndefiniteCandidate(base: String): Boolean {
+    if (!isSilentHeWord(base)) return false
+    if (base in knownSilentHeIndefiniteStems) {
+      val stemWithoutHe = base.dropLast(1)
+      // Avoid breaking genuine plural phrases like "زمین‌های" or "نام‌های" unless stem is not a frequent plural noun
+      if (stemWithoutHe in knownGluedPluralHaStems) return false
       return true
     }
-    // High-confidence plural suffixes "های"/"هایی"/"هایم"... rarely occur naturally inside non-plural Persian words
-    val distinctivePluralSuffixes = setOf("هایی", "هایم", "هایت", "هایش", "هایمان", "هایتان", "هایشان")
-    return suffix in distinctivePluralSuffixes && base.length >= 4
+    return false
   }
 
   private fun isSilentHeWord(word: String): Boolean {
@@ -329,7 +540,6 @@ object PersianZwnjRestorer {
     if (token in commonVerbBasesForGluedSplit) return true
     if (token in protectedNonSplitWords || token in nonVerbWordsAfterMi) return false
     if (token.length < 2) return false
-    // Recognize typical conjugated Persian verb endings when preceded explicitly by spaced "می" / "نمی"
     val verbEndings = listOf("یم", "ید", "ند", "دم", "دی", "تم", "تی", "ست")
     return verbEndings.any { token.endsWith(it) && token.length >= it.length + 1 }
   }
